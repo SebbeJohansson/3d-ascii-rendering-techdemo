@@ -1,10 +1,11 @@
 import { city } from './city'
+import { forest } from './forest'
 import type { Environment } from './types'
 
 export type { Environment, EnvironmentScene, Primitive, Shape } from './types'
 
 /** Every environment, in the order the panel lists them. */
-export const ENVIRONMENTS: Environment[] = [city]
+export const ENVIRONMENTS: Environment[] = [city, forest]
 
 export function findEnvironment(id: unknown): Environment | undefined {
   return ENVIRONMENTS.find(env => env.id === id)
