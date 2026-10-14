@@ -12,6 +12,9 @@ import type { Vec3 } from './math'
  */
 const UNIT_GEOMETRY: Record<Shape, () => THREE.BufferGeometry> = {
   box: () => new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0),
+  cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0),
+  cone: () => new THREE.ConeGeometry(0.5, 1, 12).translate(0, 0.5, 0),
+  sphere: () => new THREE.SphereGeometry(0.5, 16, 12).translate(0, 0.5, 0),
 }
 
 /** Builds the three scene graph for an environment. Rendering is left to the caller. */

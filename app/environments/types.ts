@@ -1,8 +1,10 @@
-export type Shape = 'box'
+export type Shape = 'box' | 'cylinder' | 'cone' | 'sphere'
 
 /**
- * One solid in an environment, described by the box it fills: a footprint centered on
- * (x, z), standing on y, `width` × `depth` wide and `height` tall.
+ * One solid in an environment. Every shape is described by the box it fills: a footprint
+ * centered on (x, z), standing on y, `width` × `depth` wide and `height` tall.
+ * Cylinders and cones stand upright on a circle of diameter `width` (keep depth = width);
+ * cones taper to a point at the top. Spheres are ellipsoids filling the box.
  */
 export interface Primitive {
   shape: Shape

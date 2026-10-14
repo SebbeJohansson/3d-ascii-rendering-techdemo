@@ -1,6 +1,6 @@
 /**
  * A tiny CPU ray tracer. No 3D engine, no GPU: every character cell on screen shoots one ray
- * into the environment's primitives (axis-aligned boxes).
+ * into the environment's primitives (boxes, upright cylinders and cones, ellipsoids).
  *
  * Primitives are bucketed by their bounding boxes into a uniform grid on the ground plane,
  * so a ray only tests the primitives in the cells it actually crosses (2D DDA traversal).
@@ -48,7 +48,10 @@ export interface Camera {
 const CELL_SIZE = 8
 const EPS = 1e-4
 const BOX = 0
-const SHAPE_CODES: Record<Shape, number> = { box: BOX }
+const CYLINDER = 1
+const CONE = 2
+const SPHERE = 3
+const SHAPE_CODES: Record<Shape, number> = { box: BOX, cylinder: CYLINDER, cone: CONE, sphere: SPHERE }
 const GROUND = -1
 const MISS = -2
 
@@ -116,10 +119,143 @@ export function buildRaycastScene(env: Environment, { primitives, extent }: Envi
 /** Result of the last trace() call. Reused to avoid allocating per ray. */
 const hit = { t: 0, prim: MISS, nx: 0, ny: 0, nz: 0 }
 
-// Surface normal of the last candidate hit, written by the shape test in trace().
+// Surface normal of the last candidate hit, written by the shape tests in trace() and below.
 let cnx = 0
 let cny = 0
 let cnz = 0
+
+/** Flat circular cap at height capY. Returns t if it is hit closer than `best`, else `best`. */
+function hitDisc(capY: number, ny: number, r: number, X: number, oy: number, Z: number, dx: number, dy: number, dz: number, best: number) {
+  const t = (capY - oy) / dy
+  if (t > EPS && t < best) {
+    const px = X + t * dx
+    const pz = Z + t * dz
+    if (px * px + pz * pz <= r * r) {
+      cnx = 0
+      cny = ny
+      cnz = 0
+      return t
+    }
+  }
+  return best
+}
+
+/** Upright cylinder filling the bounds at offset o. X/Z are the ray origin relative to its axis. */
+function hitCylinder(b: Float32Array, o: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+  const r = (b[o + 3]! - b[o]!) / 2
+  const X = ox - (b[o]! + r)
+  const Z = oz - (b[o + 2]! + b[o + 5]!) / 2
+  const y0 = b[o + 1]!
+  const y1 = b[o + 4]!
+  let best = Infinity
+
+  // Side wall: solve |(X, Z) + t (dx, dz)| = r.
+  const a = dx * dx + dz * dz
+  if (a > 1e-12) {
+    const hb = X * dx + Z * dz
+    const disc = hb * hb - a * (X * X + Z * Z - r * r)
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc)
+      let t = (-hb - sq) / a
+      let y = oy + t * dy
+      if (t <= EPS || y < y0 || y > y1) {
+        t = (-hb + sq) / a
+        y = oy + t * dy
+      }
+      if (t > EPS && y >= y0 && y <= y1) {
+        best = t
+        cnx = (X + t * dx) / r
+        cny = 0
+        cnz = (Z + t * dz) / r
+      }
+    }
+  }
+  if (dy !== 0) {
+    best = hitDisc(y1, 1, r, X, oy, Z, dx, dy, dz, best)
+    best = hitDisc(y0, -1, r, X, oy, Z, dx, dy, dz, best)
+  }
+  return best
+}
+
+/** Checks one root of the cone equation: in front of the ray and between base and tip. */
+function coneSide(t: number, X: number, Z: number, oy: number, dx: number, dy: number, dz: number, y0: number, y1: number, k: number) {
+  if (!(t > EPS)) return Infinity
+  const py = oy + t * dy
+  if (py < y0 || py > y1) return Infinity
+  const px = X + t * dx
+  const pz = Z + t * dz
+  // Gradient of x² + z² − k²(y1 − y)²: outward, tilted up by the cone's slope.
+  const ny = k * k * (y1 - py)
+  const len = Math.hypot(px, ny, pz) || 1
+  cnx = px / len
+  cny = ny / len
+  cnz = pz / len
+  return t
+}
+
+/** Upright cone filling the bounds: circular base at the bottom, point at the top. */
+function hitCone(b: Float32Array, o: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+  const r = (b[o + 3]! - b[o]!) / 2
+  const X = ox - (b[o]! + r)
+  const Z = oz - (b[o + 2]! + b[o + 5]!) / 2
+  const y0 = b[o + 1]!
+  const y1 = b[o + 4]!
+  const k = r / (y1 - y0)
+  const k2 = k * k
+  const Y = y1 - oy
+  let best = Infinity
+
+  // Side: x² + z² = k² (y1 − y)², a quadratic a t² + 2 hb t + c = 0 along the ray.
+  const a = dx * dx + dz * dz - k2 * dy * dy
+  const hb = X * dx + Z * dz + k2 * Y * dy
+  const c = X * X + Z * Z - k2 * Y * Y
+  if (Math.abs(a) > 1e-12) {
+    const disc = hb * hb - a * c
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc)
+      const t1 = (-hb - sq) / a
+      const t2 = (-hb + sq) / a
+      best = coneSide(Math.min(t1, t2), X, Z, oy, dx, dy, dz, y0, y1, k)
+      if (best === Infinity) best = coneSide(Math.max(t1, t2), X, Z, oy, dx, dy, dz, y0, y1, k)
+    }
+  }
+  else if (hb !== 0) {
+    // Ray parallel to the cone's slope: the equation is linear.
+    best = coneSide(-c / (2 * hb), X, Z, oy, dx, dy, dz, y0, y1, k)
+  }
+  if (dy !== 0) best = hitDisc(y0, -1, r, X, oy, Z, dx, dy, dz, best)
+  return best
+}
+
+/** Ellipsoid filling the bounds: squash space so it becomes a unit sphere, then solve. */
+function hitSphere(b: Float32Array, o: number, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+  const rx = (b[o + 3]! - b[o]!) / 2
+  const ry = (b[o + 4]! - b[o + 1]!) / 2
+  const rz = (b[o + 5]! - b[o + 2]!) / 2
+  const X = (ox - b[o]! - rx) / rx
+  const Y = (oy - b[o + 1]! - ry) / ry
+  const Z = (oz - b[o + 2]! - rz) / rz
+  const DX = dx / rx
+  const DY = dy / ry
+  const DZ = dz / rz
+  const a = DX * DX + DY * DY + DZ * DZ
+  const hb = X * DX + Y * DY + Z * DZ
+  const disc = hb * hb - a * (X * X + Y * Y + Z * Z - 1)
+  if (disc < 0) return Infinity
+  const sq = Math.sqrt(disc)
+  let t = (-hb - sq) / a
+  if (t <= EPS) t = (-hb + sq) / a
+  if (t <= EPS) return Infinity
+  // Normal of an ellipsoid: the squashed-space position divided by the radii once more.
+  const nx = (X + t * DX) / rx
+  const ny = (Y + t * DY) / ry
+  const nz = (Z + t * DZ) / rz
+  const len = Math.hypot(nx, ny, nz)
+  cnx = nx / len
+  cny = ny / len
+  cnz = nz / len
+  return t
+}
 
 /**
  * Finds the nearest primitive or ground hit along a ray. With anyHit set it returns as soon as
@@ -166,7 +302,7 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
     s.rayId = 1
   }
   const rayId = s.rayId
-  const { bounds, cellStart, cellItems, stamp, cells, cellSize, half } = s
+  const { bounds, shapes, cellStart, cellItems, stamp, cells, cellSize, half } = s
 
   // 2D DDA across grid cells, starting where the ray enters the environment.
   let cx = Math.min(cells - 1, Math.max(0, Math.floor((ox + dx * t0 + half) / cellSize)))
@@ -185,7 +321,9 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
       if (stamp[p] === rayId) continue
       stamp[p] = rayId
 
-      // Slab test: the axis the ray entered through gives the face normal.
+      // Slab test against the bounding box. For boxes it is the exact test, and the axis
+      // the ray entered through gives the face normal. Other shapes are only tested exactly
+      // when their bounding box is hit closer than the best hit so far.
       const o = p * 6
       let near = -Infinity
       let far = Infinity
@@ -204,12 +342,24 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
       far = Math.min(far, Math.max(a, b))
       if (near > far || far <= EPS || near >= best) continue
 
-      if (near <= EPS) continue
-      const t = near
-      const sign = -Math.sign(axis === 0 ? dx : axis === 1 ? dy : dz)
-      cnx = axis === 0 ? sign : 0
-      cny = axis === 1 ? sign : 0
-      cnz = axis === 2 ? sign : 0
+      const shape = shapes[p]
+      let t: number
+      if (shape === BOX) {
+        if (near <= EPS) continue
+        t = near
+        const sign = -Math.sign(axis === 0 ? dx : axis === 1 ? dy : dz)
+        cnx = axis === 0 ? sign : 0
+        cny = axis === 1 ? sign : 0
+        cnz = axis === 2 ? sign : 0
+      }
+      else {
+        t = shape === CYLINDER
+          ? hitCylinder(bounds, o, ox, oy, oz, dx, dy, dz)
+          : shape === CONE
+            ? hitCone(bounds, o, ox, oy, oz, dx, dy, dz)
+            : hitSphere(bounds, o, ox, oy, oz, dx, dy, dz)
+        if (t >= best) continue
+      }
 
       if (anyHit) return true
       best = t
