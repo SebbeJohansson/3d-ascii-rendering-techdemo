@@ -18,6 +18,7 @@ const color = usePersistentState('ascii-color', () => true)
 const cellBackground = usePersistentState('ascii-cell-background', () => true)
 const atlas = usePersistentState('ascii-atlas', () => true)
 const stretch = usePersistentState('ascii-stretch', () => false)
+const outlines = usePersistentState('ascii-outlines', () => true)
 const worker = usePersistentState('ascii-worker', () => true)
 const fontSize = usePersistentState('ascii-font-size', () => 12)
 </script>
@@ -32,6 +33,7 @@ const fontSize = usePersistentState('ascii-font-size', () => 12)
       :cell-background="cellBackground"
       :atlas="atlas"
       :stretch="stretch"
+      :outlines="outlines"
       :worker="worker"
       :font-size="fontSize"
       @grid="grid = $event"
@@ -52,6 +54,10 @@ const fontSize = usePersistentState('ascii-font-size', () => 12)
       <label class="toggle" :class="{ disabled: !color }">
         <input v-model="cellBackground" type="checkbox" :disabled="!color">
         Cell backgrounds (solid color)
+      </label>
+      <label class="toggle">
+        <input v-model="outlines" type="checkbox">
+        Outlines (line characters on edges)
       </label>
       <label class="toggle">
         <input v-model="stretch" type="checkbox">

@@ -9,11 +9,11 @@ import { poseScene } from '../lib/tracers'
 export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
   /** Traces rows rowStart, rowStart + rowStep, ... into tightly packed ink/rgb. */
-  | { type: 'render', camera: Camera, time: number, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array }
+  | { type: 'render', camera: Camera, time: number, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 export type WorkerResponse =
   | { type: 'scene', summary: string }
-  | { type: 'frame', rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array }
+  | { type: 'frame', rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 let scene: RaycastScene | undefined
 let generated: EnvironmentScene | undefined
@@ -33,11 +33,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     reply({ type: 'scene', summary: generated.summary })
   }
   else if (scene && generated) {
-    const { camera, time, cols, rows, rowStart, rowStep, ink, rgb } = msg
+    const { camera, time, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg
     // Every worker poses the scene for the same time, so all rows show the same moment.
     poseScene(envId, generated, scene, time)
-    renderScene(scene, camera, cols, rows, ink, rgb, rowStart, rowStep)
+    renderScene(scene, camera, cols, rows, ink, rgb, depths, normals, rowStart, rowStep)
     // Hand the buffers back without copying.
-    reply({ type: 'frame', rowStart, rowStep, ink, rgb }, [ink.buffer, rgb.buffer])
+    reply({ type: 'frame', rowStart, rowStep, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
   }
 }

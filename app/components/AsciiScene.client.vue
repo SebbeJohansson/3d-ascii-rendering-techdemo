@@ -19,6 +19,8 @@ const props = defineProps<{
   atlas: boolean
   /** Spread each frame's ink over the whole character ramp. */
   stretch: boolean
+  /** Draw edges and silhouettes as line characters. */
+  outlines: boolean
   /** Ray trace in a pool of Web Workers instead of on the main thread. */
   worker: boolean
   /** Character height in CSS pixels. Smaller characters mean more cells and more detail. */
@@ -80,7 +82,8 @@ function onFrame(frame: TracedFrame) {
 
 function draw() {
   if (!ctx || !last) return
-  glyphs.draw(ctx, last.ink, last.rgb, { sky: props.env.sky, color: props.color, cellBackground: props.cellBackground, atlas: props.atlas, stretch: props.stretch })
+  const { env, color, cellBackground, atlas, stretch, outlines } = props
+  glyphs.draw(ctx, last, { sky: env.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar })
 }
 
 function resize() {
@@ -153,7 +156,7 @@ onMounted(async () => {
 })
 
 watch(() => [props.env, props.seed, props.size], rebuild)
-watch(() => [props.color, props.atlas, props.cellBackground, props.stretch], draw)
+watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.fontSize, resize)
 watch(() => props.worker, startTracer)
 

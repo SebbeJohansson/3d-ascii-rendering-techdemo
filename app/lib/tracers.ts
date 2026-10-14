@@ -13,6 +13,10 @@ export interface TracedFrame {
   rows: number
   ink: Uint8Array
   rgb: Uint8Array
+  /** View depth per cell, Infinity where the ray hit nothing. */
+  depths: Float32Array
+  /** Surface normal per cell: x, y, z × 127. */
+  normals: Int8Array
   /** Wall-clock time from request to result, including any worker messaging. */
   traceMs: number
 }
@@ -42,6 +46,11 @@ export function poseScene(envId: string, generated: EnvironmentScene, scene: Ray
   updateMeshes(scene, generated)
 }
 
+function emptyFrame(cols: number, rows: number): TracedFrame {
+  const n = cols * rows
+  return { cols, rows, ink: new Uint8Array(n), rgb: new Uint8Array(n * 3), depths: new Float32Array(n), normals: new Int8Array(n * 3), traceMs: 0 }
+}
+
 export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Tracer {
   let scene: RaycastScene | undefined
   let generated: EnvironmentScene | undefined
@@ -59,11 +68,11 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
     render(camera, cols, rows, time) {
       if (!scene || !generated) return
       poseScene(currentEnv, generated, scene, time)
-      const ink = new Uint8Array(cols * rows)
-      const rgb = new Uint8Array(cols * rows * 3)
+      const frame = emptyFrame(cols, rows)
       const start = performance.now()
-      renderScene(scene, camera, cols, rows, ink, rgb)
-      onFrame({ cols, rows, ink, rgb, traceMs: performance.now() - start })
+      renderScene(scene, camera, cols, rows, frame.ink, frame.rgb, frame.depths, frame.normals)
+      frame.traceMs = performance.now() - start
+      onFrame(frame)
     },
     dispose() {},
   }
@@ -104,7 +113,9 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     const { cols, rows } = frame
     for (let y = msg.rowStart, row = 0; y < rows; y += msg.rowStep, row++) {
       frame.ink.set(msg.ink.subarray(row * cols, (row + 1) * cols), y * cols)
+      frame.depths.set(msg.depths.subarray(row * cols, (row + 1) * cols), y * cols)
       frame.rgb.set(msg.rgb.subarray(row * cols * 3, (row + 1) * cols * 3), y * cols * 3)
+      frame.normals.set(msg.normals.subarray(row * cols * 3, (row + 1) * cols * 3), y * cols * 3)
     }
     if (--pending > 0) return
 
@@ -126,12 +137,11 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
       if (pending) return
       pending = workers.length
       frameStart = performance.now()
-      frame = { cols, rows, ink: new Uint8Array(cols * rows), rgb: new Uint8Array(cols * rows * 3), traceMs: 0 }
+      frame = emptyFrame(cols, rows)
       workers.forEach((w, k) => {
-        const bandRows = Math.max(0, Math.ceil((rows - k) / count))
-        const ink = new Uint8Array(bandRows * cols)
-        const rgb = new Uint8Array(bandRows * cols * 3)
-        post(w, { type: 'render', camera, time, cols, rows, rowStart: k, rowStep: count, ink, rgb }, [ink.buffer, rgb.buffer])
+        const band = emptyFrame(cols, Math.max(0, Math.ceil((rows - k) / count)))
+        const { ink, rgb, depths, normals } = band
+        post(w, { type: 'render', camera, time, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
       })
     },
     dispose() {

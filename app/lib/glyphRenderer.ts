@@ -9,9 +9,12 @@
  * - fillText: one canvas text call per character. Kept for comparison.
  */
 import { hexToBytes, hexToCss } from './color'
+import { findOutlines, OUTLINE_CHARS } from './outlines'
 
 // Sparse to dense. The first character is a space so the sky stays blank.
 const RAMP = ' .\'`^",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$'
+// Everything the atlas holds: the ramp, then the outline characters.
+const GLYPHS = RAMP + OUTLINE_CHARS
 // Ink (0..255) to ramp index, so the draw loops do one table lookup per cell.
 const GLYPH = new Uint8Array(256).map((_, v) => Math.min(RAMP.length - 1, Math.floor((v / 255) * RAMP.length)))
 // Line height relative to font size, so rows don't touch.
@@ -31,6 +34,51 @@ export interface DrawOptions {
   atlas: boolean
   /** Stretch this frame's ink range over the whole ramp, so every frame uses all characters. */
   stretch: boolean
+  /** Draw edges as line characters (see outlines.ts). */
+  outlines: boolean
+  /** The environment's fog range: outlines fade out with distance like everything else. */
+  fogNear: number
+  fogFar: number
+}
+
+/** What the tracer produced for one frame. */
+export interface Cells {
+  ink: Uint8Array
+  rgb: Uint8Array
+  depths: Float32Array
+  normals: Int8Array
+}
+
+/** Outlines further into the fog than this (0 = fully fogged) aren't drawn. */
+const MIN_OUTLINE_STRENGTH = 0.15
+
+/**
+ * Line color for an outline: well darker than a light surface, well lighter than a dark one,
+ * eased back toward the surface color as it fades into the fog (strength 1 → 0).
+ */
+function outlineShade(c: number, lightSurface: boolean, strength: number) {
+  return lightSurface ? (c * (1 - 0.7 * strength)) | 0 : (c + (255 - c) * 0.5 * strength) | 0
+}
+
+/**
+ * Picks each cell's glyph (index into GLYPHS) and, for outline cells, the outline's strength.
+ * Cells with glyph 0 are left as sky.
+ */
+function pickGlyphs(cells: Cells, cols: number, rows: number, options: DrawOptions, glyphs: Uint8Array, edgeStrength: Float32Array, edges: Uint8Array) {
+  const { ink, depths } = cells
+  const glyphFor = glyphTable(ink, options.stretch)
+  for (let i = 0; i < ink.length; i++) glyphs[i] = glyphFor[ink[i]!]!
+  edgeStrength.fill(0)
+  if (!options.outlines) return
+  findOutlines(cols, rows, depths, cells.normals, edges)
+  const { fogNear, fogFar } = options
+  for (let i = 0; i < edges.length; i++) {
+    if (!edges[i]) continue
+    const strength = 1 - Math.min(1, Math.max(0, (depths[i]! - fogNear) / (fogFar - fogNear)))
+    if (strength < MIN_OUTLINE_STRENGTH) continue
+    glyphs[i] = RAMP.length + edges[i]! - 1
+    edgeStrength[i] = strength
+  }
 }
 
 // Share of cells ignored at each end when stretching, so a few outliers don't set the range.
@@ -93,6 +141,10 @@ export function createGlyphRenderer() {
   let atlasWidth = 0
   let frame = new ImageData(1, 1)
   let pixels = new Uint32Array(1)
+  // Per-cell scratch buffers, reused every frame.
+  let glyphs = new Uint8Array(0)
+  let edges = new Uint8Array(0)
+  let edgeStrength = new Float32Array(0)
 
   /** Sizes the canvas and character grid. Returns the new grid size. */
   function resize(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number, fontSize: number) {
@@ -117,7 +169,7 @@ export function createGlyphRenderer() {
     rows = Math.max(1, Math.floor(canvas.height / cellH))
 
     // The atlas and frame buffer work in device pixels so glyphs stay sharp on high-DPI screens.
-    atlasWidth = cellW * RAMP.length
+    atlasWidth = cellW * GLYPHS.length
     const atlas = document.createElement('canvas')
     atlas.width = atlasWidth
     atlas.height = cellH
@@ -125,25 +177,28 @@ export function createGlyphRenderer() {
     atlasCtx.font = `${fontSize * dpr}px ${FONT_FAMILY}`
     atlasCtx.textBaseline = 'top'
     atlasCtx.fillStyle = '#fff'
-    for (let g = 1; g < RAMP.length; g++) atlasCtx.fillText(RAMP[g]!, g * cellW, 0)
+    for (let g = 1; g < GLYPHS.length; g++) atlasCtx.fillText(GLYPHS[g]!, g * cellW, 0)
     const rgba = atlasCtx.getImageData(0, 0, atlasWidth, cellH).data
     glyphAlpha = new Uint8Array(atlasWidth * cellH)
     for (let i = 0; i < glyphAlpha.length; i++) glyphAlpha[i] = rgba[i * 4 + 3]!
     frame = new ImageData(canvas.width, canvas.height)
     pixels = new Uint32Array(frame.data.buffer)
+    glyphs = new Uint8Array(cols * rows)
+    edges = new Uint8Array(cols * rows)
+    edgeStrength = new Float32Array(cols * rows)
 
     return { cols, rows }
   }
 
-  function draw(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, options: DrawOptions) {
-    if (ink.length !== cols * rows) return
-    if (options.atlas) drawWithAtlas(ctx, ink, rgb, options)
-    else drawWithFillText(ctx, ink, rgb, options)
+  function draw(ctx: CanvasRenderingContext2D, cells: Cells, options: DrawOptions) {
+    if (cells.ink.length !== cols * rows) return
+    pickGlyphs(cells, cols, rows, options, glyphs, edgeStrength, edges)
+    if (options.atlas) drawWithAtlas(ctx, cells.rgb, options)
+    else drawWithFillText(ctx, cells.rgb, options)
   }
 
-  function drawWithFillText(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground, stretch }: DrawOptions) {
+  function drawWithFillText(ctx: CanvasRenderingContext2D, rgb: Uint8Array, { sky, color, cellBackground }: DrawOptions) {
     const backgrounds = color && cellBackground
-    const glyphFor = glyphTable(ink, stretch)
     ctx.fillStyle = hexToCss(sky)
     ctx.fillRect(0, 0, width, height)
     if (!color) ctx.fillStyle = MONO_CSS
@@ -152,17 +207,22 @@ export function createGlyphRenderer() {
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
-        const g = glyphFor[ink[i]!]!
+        const g = glyphs[i]!
         if (g === 0) continue
+        const edge = edgeStrength[i]!
 
-        if (backgrounds) {
+        if (backgrounds || (edge && color)) {
           const r = rgb[i * 3]!
           const gr = rgb[i * 3 + 1]!
           const b = rgb[i * 3 + 2]!
           const light = isLight(r, gr, b)
-          ctx.fillStyle = `rgb(${r},${gr},${b})`
-          ctx.fillRect(x * charWidth, y * lineHeight, charWidth, lineHeight)
-          ctx.fillStyle = `rgb(${glyphShade(r, light, shade)},${glyphShade(gr, light, shade)},${glyphShade(b, light, shade)})`
+          if (backgrounds) {
+            ctx.fillStyle = `rgb(${r},${gr},${b})`
+            ctx.fillRect(x * charWidth, y * lineHeight, charWidth, lineHeight)
+          }
+          ctx.fillStyle = edge
+            ? `rgb(${outlineShade(r, light, edge)},${outlineShade(gr, light, edge)},${outlineShade(b, light, edge)})`
+            : `rgb(${glyphShade(r, light, shade)},${glyphShade(gr, light, shade)},${glyphShade(b, light, shade)})`
           lastStyle = ''
         }
         else if (color) {
@@ -173,16 +233,17 @@ export function createGlyphRenderer() {
             lastStyle = style
           }
         }
-        ctx.fillText(RAMP[g]!, x * charWidth, y * lineHeight)
+        ctx.fillText(GLYPHS[g]!, x * charWidth, y * lineHeight)
       }
     }
   }
 
-  function drawWithAtlas(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground, stretch }: DrawOptions) {
+  function drawWithAtlas(ctx: CanvasRenderingContext2D, rgb: Uint8Array, { sky, color, cellBackground }: DrawOptions) {
     // Everything the hot loop touches is a local: closure variables per pixel are measurably
     // slower than locals at 100k+ cells.
     const backgrounds = color && cellBackground
-    const glyphFor = glyphTable(ink, stretch)
+    const cellGlyphs = glyphs
+    const cellEdges = edgeStrength
     const [skyR, skyG, skyB] = hexToBytes(sky)
     const { width: frameW, height: frameH } = frame
     const px = pixels
@@ -199,8 +260,9 @@ export function createGlyphRenderer() {
       const h = Math.min(gh, frameH - oy)
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
-        const g = glyphFor[ink[i]!]!
+        const g = cellGlyphs[i]!
         if (g === 0) continue
+        const edge = cellEdges[i]!
 
         const r = color ? rgb[i * 3]! : MONO[0]
         const gr = color ? rgb[i * 3 + 1]! : MONO[1]
@@ -213,10 +275,18 @@ export function createGlyphRenderer() {
         let fgG = gr
         let fgB = b
         if (backgrounds) {
-          const light = isLight(r, gr, b)
           bgR = r
           bgG = gr
           bgB = b
+        }
+        if (edge && color) {
+          const light = isLight(r, gr, b)
+          fgR = outlineShade(r, light, edge)
+          fgG = outlineShade(gr, light, edge)
+          fgB = outlineShade(b, light, edge)
+        }
+        else if (backgrounds) {
+          const light = isLight(r, gr, b)
           fgR = glyphShade(r, light, strength)
           fgG = glyphShade(gr, light, strength)
           fgB = glyphShade(b, light, strength)

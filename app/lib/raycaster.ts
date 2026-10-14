@@ -468,14 +468,16 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
  * Traces one ray per cell of a cols × rows grid, rows top to bottom. Writes the shaded color
  * into `rgb` (3 bytes per cell) and into `ink` how shadowed the surface is (0..255). The ink
  * decides how dense a character to draw: 0 means draw nothing, because the cell missed
- * everything or has faded into the fog.
+ * everything or has faded into the fog. Also writes each cell's view depth (Infinity for
+ * sky) and surface normal (3 bytes, ×127), which the outline pass uses to find edges.
  *
  * With rowStart/rowStep it traces only every rowStep-th row starting at rowStart, packed
  * tightly into ink/rgb. Interleaving rows like this gives each worker an even mix of
  * cheap sky rows and expensive scenery rows.
  */
 export function renderScene(
-  s: RaycastScene, cam: Camera, cols: number, rows: number, ink: Uint8Array, rgb: Uint8Array,
+  s: RaycastScene, cam: Camera, cols: number, rows: number,
+  ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array,
   rowStart = 0, rowStep = 1,
 ) {
   const { forward: f, right: r, up: u } = cameraBasis(cam.position, cam.target)
@@ -498,6 +500,7 @@ export function renderScene(
       const i = row * cols + x
       if (!trace(s, ox, oy, oz, dx, dy, dz, false)) {
         ink[i] = 0
+        depths[i] = Infinity
         continue
       }
 
@@ -510,7 +513,7 @@ export function renderScene(
       if (prim === MESH) {
         // Blend the triangle's three vertex normals and colors by where the ray hit it,
         // which makes the faceted mesh look smooth.
-        const { normals, albedo, bvh } = s.mesh!
+        const { normals: vertexNormals, albedo, bvh } = s.mesh!
         const t3 = hit.triangle * 3
         const i0 = bvh.indices[t3]! * 3
         const i1 = bvh.indices[t3 + 1]! * 3
@@ -518,9 +521,9 @@ export function renderScene(
         const w1 = hit.u
         const w2 = hit.v
         const w0 = 1 - w1 - w2
-        nx = normals[i0]! * w0 + normals[i1]! * w1 + normals[i2]! * w2
-        ny = normals[i0 + 1]! * w0 + normals[i1 + 1]! * w1 + normals[i2 + 1]! * w2
-        nz = normals[i0 + 2]! * w0 + normals[i1 + 2]! * w1 + normals[i2 + 2]! * w2
+        nx = vertexNormals[i0]! * w0 + vertexNormals[i1]! * w1 + vertexNormals[i2]! * w2
+        ny = vertexNormals[i0 + 1]! * w0 + vertexNormals[i1 + 1]! * w1 + vertexNormals[i2 + 1]! * w2
+        nz = vertexNormals[i0 + 2]! * w0 + vertexNormals[i1 + 2]! * w1 + vertexNormals[i2 + 2]! * w2
         const nl = Math.hypot(nx, ny, nz) || 1
         // Seen from behind (e.g. through a gap): shade the side facing the camera.
         const flip = nx * dx + ny * dy + nz * dz > 0 ? -1 / nl : 1 / nl
@@ -574,6 +577,10 @@ export function renderScene(
       rgb[i * 3 + 2] = cb
       const shadow = Math.min(1, Math.max(0, (MAX_LIGHT - luminance(lr, lg, lb)) / (MAX_LIGHT - MIN_LIGHT)))
       ink[i] = (MIN_INK + (1 - MIN_INK) * shadow) * (1 - fog) * 255
+      depths[i] = depth
+      normals[i * 3] = nx * 127
+      normals[i * 3 + 1] = ny * 127
+      normals[i * 3 + 2] = nz * 127
     }
   }
 }
