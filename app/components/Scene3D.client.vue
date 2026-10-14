@@ -68,6 +68,22 @@ onMounted(async () => {
 
 watch(() => [props.env, props.seed, props.size], rebuild)
 
+// Follow camera moves made elsewhere (the ASCII half of the split view). Our own controls
+// write here too, but then the camera already matches and nothing happens.
+watch(view, ({ position, target }) => {
+  if (!controls) return
+  const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) < 1e-6)
+  if (same(camera.position.toArray(), position) && same(controls.target.toArray(), target)) return
+  // Drop any glide left over from an earlier drag here: one undamped update applies and
+  // clears it. Otherwise it keeps rotating this view away from the other one.
+  controls.enableDamping = false
+  controls.update()
+  controls.enableDamping = true
+  camera.position.set(...position)
+  controls.target.set(...target)
+  controls.update()
+})
+
 onBeforeUnmount(() => {
   unmounted = true
   resizeObserver?.disconnect()

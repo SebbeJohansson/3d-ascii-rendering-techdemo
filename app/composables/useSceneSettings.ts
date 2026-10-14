@@ -42,6 +42,19 @@ export function useSceneSettings(env: Environment) {
   }
 }
 
+/** ASCII display settings, shared by all environments and saved across reloads. */
+export function useAsciiSettings() {
+  return {
+    color: usePersistentState('ascii-color', () => true),
+    cellBackground: usePersistentState('ascii-cell-background', () => true),
+    outlines: usePersistentState('ascii-outlines', () => true),
+    stretch: usePersistentState('ascii-stretch', () => false),
+    atlas: usePersistentState('ascii-atlas', () => true),
+    worker: usePersistentState('ascii-worker', () => true),
+    fontSize: usePersistentState('ascii-font-size', () => 12),
+  }
+}
+
 /** Camera per environment, shared by its 3D and ASCII views. */
 export function useCameraView(env: Environment) {
   return useState<CameraView>(`camera-${env.id}`, () => structuredClone(env.camera ?? DEFAULT_VIEW))

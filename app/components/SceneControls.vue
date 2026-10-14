@@ -2,10 +2,12 @@
 import { ENVIRONMENTS, type Environment } from '~/environments'
 import type { FramePerf } from '~/lib/frameMeter'
 
+export type ViewMode = '3d' | 'ascii' | 'split'
+
 const props = defineProps<{
   env: Environment
-  /** Which view this panel sits on, so the tabs can link to the other one. */
-  mode: '3d' | 'ascii'
+  /** Which view this panel sits on, so the tabs can link to the others. */
+  mode: ViewMode
   stats?: string
   perf?: FramePerf
 }>()
@@ -16,8 +18,8 @@ function randomize() {
   seed.value = Math.floor(Math.random() * 1e6)
 }
 
-function viewPath(envId: string, mode: '3d' | 'ascii') {
-  return mode === '3d' ? `/${envId}` : `/${envId}/ascii`
+function viewPath(envId: string, mode: ViewMode) {
+  return mode === '3d' ? `/${envId}` : `/${envId}/${mode}`
 }
 </script>
 
@@ -34,6 +36,9 @@ function viewPath(envId: string, mode: '3d' | 'ascii') {
       </NuxtLink>
       <NuxtLink :to="viewPath(env.id, 'ascii')" :class="{ active: mode === 'ascii' }">
         ASCII
+      </NuxtLink>
+      <NuxtLink :to="viewPath(env.id, 'split')" :class="{ active: mode === 'split' }">
+        Split
       </NuxtLink>
     </nav>
     <label>

@@ -158,6 +158,8 @@ onMounted(async () => {
 watch(() => [props.env, props.seed, props.size], rebuild)
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.fontSize, resize)
+// The camera can also be moved from elsewhere (the 3D half of the split view).
+watch(view, () => (dirty = true))
 watch(() => props.worker, startTracer)
 
 onBeforeUnmount(() => {
