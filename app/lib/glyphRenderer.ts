@@ -62,12 +62,17 @@ function glyphTable(ink: Uint8Array, stretch: boolean) {
   return table
 }
 
+// At this character size and up, glyphs get the full shade below. Smaller characters can't be
+// read as letters anyway, and a strong shade only tints their cells (pale pines, row stripes).
+const FULL_SHADE_FONT_SIZE = 12
+
 /**
  * The character's own color when cells have a background: a darker shade on light surfaces,
- * a lighter one on dark surfaces, so the glyph stays visible against its cell.
+ * a lighter one on dark surfaces, so the glyph stays visible against its cell. `strength`
+ * (0..1) scales how far the shade moves from the surface color.
  */
-function glyphShade(c: number, lightSurface: boolean) {
-  return lightSurface ? (c * 0.6) | 0 : (c + (255 - c) * 0.35) | 0
+function glyphShade(c: number, lightSurface: boolean, strength: number) {
+  return lightSurface ? (c * (1 - 0.4 * strength)) | 0 : (c + (255 - c) * 0.35 * strength) | 0
 }
 
 function isLight(r: number, g: number, b: number) {
@@ -81,6 +86,7 @@ export function createGlyphRenderer() {
   let cellH = 0
   let charWidth = 0
   let lineHeight = 0
+  let shade = 1
   let width = 0
   let height = 0
   let glyphAlpha = new Uint8Array(0)
@@ -106,6 +112,7 @@ export function createGlyphRenderer() {
     cellH = Math.max(1, Math.round(fontSize * LINE_SPACING * dpr))
     charWidth = cellW / dpr
     lineHeight = cellH / dpr
+    shade = Math.min(1, fontSize / FULL_SHADE_FONT_SIZE)
     cols = Math.max(1, Math.floor(canvas.width / cellW))
     rows = Math.max(1, Math.floor(canvas.height / cellH))
 
@@ -155,7 +162,7 @@ export function createGlyphRenderer() {
           const light = isLight(r, gr, b)
           ctx.fillStyle = `rgb(${r},${gr},${b})`
           ctx.fillRect(x * charWidth, y * lineHeight, charWidth, lineHeight)
-          ctx.fillStyle = `rgb(${glyphShade(r, light)},${glyphShade(gr, light)},${glyphShade(b, light)})`
+          ctx.fillStyle = `rgb(${glyphShade(r, light, shade)},${glyphShade(gr, light, shade)},${glyphShade(b, light, shade)})`
           lastStyle = ''
         }
         else if (color) {
@@ -183,6 +190,7 @@ export function createGlyphRenderer() {
     const stride = atlasWidth
     const gw = cellW
     const gh = cellH
+    const strength = shade
     // ImageData is RGBA in memory, so a little-endian Uint32 pixel is 0xAABBGGRR.
     px.fill(0xFF000000 | (skyB << 16) | (skyG << 8) | skyR)
 
@@ -209,9 +217,9 @@ export function createGlyphRenderer() {
           bgR = r
           bgG = gr
           bgB = b
-          fgR = glyphShade(r, light)
-          fgG = glyphShade(gr, light)
-          fgB = glyphShade(b, light)
+          fgR = glyphShade(r, light, strength)
+          fgG = glyphShade(gr, light, strength)
+          fgB = glyphShade(b, light, strength)
         }
 
         const ox = x * gw
