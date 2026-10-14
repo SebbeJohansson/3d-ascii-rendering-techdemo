@@ -2,11 +2,11 @@
 const { seed, blocks } = useCitySettings()
 const stats = ref<{ buildings: number, backend: string }>()
 const perf = ref<FramePerf>()
-const color = useState('ascii-color', () => true)
-const cellBackground = useState('ascii-cell-background', () => true)
-const atlas = useState('ascii-atlas', () => true)
-const worker = useState('ascii-worker', () => true)
-const fontSize = useState('ascii-font-size', () => 12)
+const color = usePersistentState('ascii-color', () => true)
+const cellBackground = usePersistentState('ascii-cell-background', () => true)
+const atlas = usePersistentState('ascii-atlas', () => true)
+const worker = usePersistentState('ascii-worker', () => true)
+const fontSize = usePersistentState('ascii-font-size', () => 12)
 const grid = ref<{ cols: number, rows: number }>()
 </script>
 
