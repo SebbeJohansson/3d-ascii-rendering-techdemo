@@ -98,14 +98,16 @@ function camera(): Camera {
   return { position: [...position], target: [...target], fov: CAMERA_FOV, aspect: width / height }
 }
 
-// Only re-trace when something changed: the image is static between camera moves.
+// Only re-trace when something changed: a still environment is static between camera moves.
 function tick() {
   frameId = requestAnimationFrame(tick)
   meter.tick()
+  // Animated environments change every frame, so keep tracing.
+  if (props.env.animate) dirty = true
   // One frame in flight at a time. `dirty` stays set, so the next one goes out when it lands.
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
-  tracer.render(camera(), cols, rows)
+  tracer.render(camera(), cols, rows, performance.now() / 1000)
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms.

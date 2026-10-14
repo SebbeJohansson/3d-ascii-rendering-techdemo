@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Ref } from 'vue'
-import type { Environment, Primitive, Shape } from '../environments/types'
+import type { Environment, EnvironmentScene, Primitive, Shape } from '../environments/types'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { CAMERA_FOV, MAX_DISTANCE, MAX_POLAR_ANGLE, MIN_DISTANCE, type CameraView } from './camera'
 import type { Vec3 } from './math'
@@ -46,10 +46,15 @@ export function createEnvironmentScene() {
     content.clear()
   }
 
+  /** The environment and generated scene on show, for animate(). */
+  let current: { env: Environment, scene: EnvironmentScene, geometries: THREE.BufferGeometry[] } | undefined
+
   /** Replaces the current content. Returns the environment's summary, e.g. "530 buildings". */
   function build(env: Environment, seed: number, size: number) {
     clear()
-    const { primitives, meshes = [], extent, summary } = env.generate(seed, size)
+    const generated = env.generate(seed, size)
+    const { primitives, meshes = [], extent, summary } = generated
+    current = { env, scene: generated, geometries: [] }
 
     scene.background = new THREE.Color(env.sky)
     scene.fog = new THREE.Fog(env.sky, env.fogNear, env.fogFar)
@@ -100,12 +105,25 @@ export function createEnvironmentScene() {
       )
       mesh.castShadow = true
       mesh.receiveShadow = true
+      // Moving vertices make the precomputed bounding sphere wrong; don't cull with it.
+      mesh.frustumCulled = !env.animate
       content.add(mesh)
+      current.geometries.push(geometry)
     }
     return summary
   }
 
-  return { scene, camera, build, dispose: clear }
+  /** Poses an animated environment for `time` (seconds) and uploads the moved vertices. */
+  function animate(time: number) {
+    if (!current?.env.animate) return
+    current.env.animate(current.scene, time)
+    for (const geometry of current.geometries) {
+      geometry.attributes.position!.needsUpdate = true
+      geometry.attributes.normal!.needsUpdate = true
+    }
+  }
+
+  return { scene, camera, build, animate, dispose: clear }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

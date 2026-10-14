@@ -19,7 +19,7 @@ const emit = defineEmits<{
 const container = ref<HTMLDivElement>()
 const view = useCameraView(props.env)
 
-const { scene, camera, build, dispose } = createEnvironmentScene()
+const { scene, camera, build, animate, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
@@ -58,6 +58,7 @@ onMounted(async () => {
   renderer.setAnimationLoop(() => {
     // CPU time to update and submit the frame. The GPU finishes the work asynchronously.
     const start = performance.now()
+    animate(start / 1000)
     controls!.update()
     renderer!.render(scene, camera)
     meter.frame(performance.now() - start)

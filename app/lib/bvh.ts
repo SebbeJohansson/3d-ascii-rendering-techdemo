@@ -184,3 +184,54 @@ export function intersectBvh(bvh: Bvh, ox: number, oy: number, oz: number, dx: n
   }
   return best < maxT ? best : Infinity
 }
+
+/**
+ * Updates the boxes after the mesh's vertices moved (e.g. flapping wings), keeping the tree's
+ * structure. Much cheaper than a rebuild, and fine as long as the motion is moderate: boxes
+ * just get a bit looser. Children always come after their parent in the node list, so going
+ * backwards fixes every child before its parent needs it.
+ */
+export function refitBvh(bvh: Bvh) {
+  const { bounds, nodes, order, positions: p, indices } = bvh
+  for (let node = nodes.length / 2 - 1; node >= 0; node--) {
+    const o = node * 6
+    const count = nodes[node * 2 + 1]!
+    let minX = Infinity
+    let minY = Infinity
+    let minZ = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    let maxZ = -Infinity
+    if (count === 0) {
+      const left = nodes[node * 2]! * 6
+      for (const c of [left, left + 6]) {
+        minX = Math.min(minX, bounds[c]!)
+        minY = Math.min(minY, bounds[c + 1]!)
+        minZ = Math.min(minZ, bounds[c + 2]!)
+        maxX = Math.max(maxX, bounds[c + 3]!)
+        maxY = Math.max(maxY, bounds[c + 4]!)
+        maxZ = Math.max(maxZ, bounds[c + 5]!)
+      }
+    }
+    else {
+      for (let k = nodes[node * 2]!, end = k + count; k < end; k++) {
+        const t3 = order[k]! * 3
+        for (let corner = 0; corner < 3; corner++) {
+          const v = indices[t3 + corner]! * 3
+          minX = Math.min(minX, p[v]!)
+          minY = Math.min(minY, p[v + 1]!)
+          minZ = Math.min(minZ, p[v + 2]!)
+          maxX = Math.max(maxX, p[v]!)
+          maxY = Math.max(maxY, p[v + 1]!)
+          maxZ = Math.max(maxZ, p[v + 2]!)
+        }
+      }
+    }
+    bounds[o] = minX
+    bounds[o + 1] = minY
+    bounds[o + 2] = minZ
+    bounds[o + 3] = maxX
+    bounds[o + 4] = maxY
+    bounds[o + 5] = maxZ
+  }
+}

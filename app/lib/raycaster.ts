@@ -8,7 +8,7 @@
  */
 import type { Environment, EnvironmentScene, Shape } from '../environments/types'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
-import { buildBvh, bvhHit, intersectBvh, type Bvh } from './bvh'
+import { buildBvh, bvhHit, intersectBvh, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, normalize, scale, type Vec3 } from './math'
 
@@ -23,7 +23,10 @@ export interface RaycastScene {
   fogNear: number
   fogFar: number
   half: number
+  /** Top of everything, for clipping rays. Updated when meshes move. */
   maxHeight: number
+  /** Top of the primitives alone. */
+  primitivesHeight: number
   cellSize: number
   cells: number
   /** cellItems[cellStart[c] .. cellStart[c + 1]] are the primitives overlapping cell c. */
@@ -128,9 +131,10 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
       v += m.positions.length / 3
       t += m.indices.length
     }
-    for (let i = 1; i < positions.length; i += 3) maxHeight = Math.max(maxHeight, positions[i]!)
     mesh = { bvh: buildBvh(positions, indices), normals, albedo }
   }
+  const primitivesHeight = maxHeight
+  if (mesh) maxHeight = Math.max(maxHeight, mesh.bvh.bounds[4]!)
 
   return {
     bounds,
@@ -142,6 +146,7 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     fogFar: env.fogFar,
     half,
     maxHeight,
+    primitivesHeight,
     cellSize: CELL_SIZE,
     cells,
     cellStart,
@@ -150,6 +155,23 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     rayId: 0,
     mesh,
   }
+}
+
+/**
+ * Copies moved mesh vertices (from Environment.animate) into the ray tracer's merged mesh
+ * and refits its BVH. `scene` must be the one this RaycastScene was built from.
+ */
+export function updateMeshes(s: RaycastScene, { meshes = [] }: EnvironmentScene) {
+  if (!s.mesh) return
+  const { bvh, normals } = s.mesh
+  let offset = 0
+  for (const m of meshes) {
+    bvh.positions.set(m.positions, offset)
+    normals.set(m.normals, offset)
+    offset += m.positions.length
+  }
+  refitBvh(bvh)
+  s.maxHeight = Math.max(s.primitivesHeight, bvh.bounds[4]!)
 }
 
 /** Result of the last trace() call. Reused to avoid allocating per ray. */

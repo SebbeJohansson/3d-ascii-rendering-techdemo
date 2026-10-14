@@ -62,4 +62,10 @@ export interface Environment {
   /** The size slider in the panel. */
   size: { min: number, max: number, default: number, label: (size: number) => string }
   generate: (seed: number, size: number) => EnvironmentScene
+  /**
+   * Makes the environment move. Called before every frame with a scene from generate() and
+   * the time in seconds; it updates that scene's mesh positions and normals in place.
+   * Renderers keep redrawing continuously for environments that have it.
+   */
+  animate?: (scene: EnvironmentScene, time: number) => void
 }

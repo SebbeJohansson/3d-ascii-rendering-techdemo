@@ -5,7 +5,8 @@
  */
 import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
-import { buildRaycastScene, renderScene, type Camera, type RaycastScene } from './raycaster'
+import type { EnvironmentScene } from '../environments/types'
+import { buildRaycastScene, renderScene, updateMeshes, type Camera, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -28,23 +29,36 @@ export interface Tracer {
   /** A frame is being traced; wait for onFrame before asking for the next. */
   readonly busy: boolean
   setScene: (envId: string, seed: number, size: number) => void
-  render: (camera: Camera, cols: number, rows: number) => void
+  /** `time` (seconds) poses animated environments; others ignore it. */
+  render: (camera: Camera, cols: number, rows: number, time: number) => void
   dispose: () => void
+}
+
+/** Poses an animated environment for this frame and updates the ray tracer's copy of it. */
+export function poseScene(envId: string, generated: EnvironmentScene, scene: RaycastScene, time: number) {
+  const env = getEnvironment(envId)
+  if (!env.animate) return
+  env.animate(generated, time)
+  updateMeshes(scene, generated)
 }
 
 export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Tracer {
   let scene: RaycastScene | undefined
+  let generated: EnvironmentScene | undefined
+  let currentEnv = ''
   return {
     label: 'main thread',
     busy: false,
     setScene(envId, seed, size) {
       const env = getEnvironment(envId)
-      const generated = env.generate(seed, size)
+      generated = env.generate(seed, size)
       scene = buildRaycastScene(env, generated)
+      currentEnv = envId
       onScene(generated.summary)
     },
-    render(camera, cols, rows) {
-      if (!scene) return
+    render(camera, cols, rows, time) {
+      if (!scene || !generated) return
+      poseScene(currentEnv, generated, scene, time)
       const ink = new Uint8Array(cols * rows)
       const rgb = new Uint8Array(cols * rows * 3)
       const start = performance.now()
@@ -108,7 +122,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     setScene(envId, seed, size) {
       for (const w of workers) post(w, { type: 'scene', envId, seed, size })
     },
-    render(camera, cols, rows) {
+    render(camera, cols, rows, time) {
       if (pending) return
       pending = workers.length
       frameStart = performance.now()
@@ -117,7 +131,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
         const bandRows = Math.max(0, Math.ceil((rows - k) / count))
         const ink = new Uint8Array(bandRows * cols)
         const rgb = new Uint8Array(bandRows * cols * 3)
-        post(w, { type: 'render', camera, cols, rows, rowStart: k, rowStep: count, ink, rgb }, [ink.buffer, rgb.buffer])
+        post(w, { type: 'render', camera, time, cols, rows, rowStart: k, rowStep: count, ink, rgb }, [ink.buffer, rgb.buffer])
       })
     },
     dispose() {
