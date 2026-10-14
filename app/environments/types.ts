@@ -1,3 +1,5 @@
+import type { CameraView } from '../lib/camera'
+
 export type Shape = 'box' | 'cylinder' | 'cone' | 'sphere'
 
 /**
@@ -55,6 +57,8 @@ export interface Environment {
   ground: number
   fogNear: number
   fogFar: number
+  /** Where the camera starts. Defaults to an overview from above. */
+  camera?: CameraView
   /** The size slider in the panel. */
   size: { min: number, max: number, default: number, label: (size: number) => string }
   generate: (seed: number, size: number) => EnvironmentScene

@@ -44,7 +44,7 @@ export function useSceneSettings(env: Environment) {
 
 /** Camera per environment, shared by its 3D and ASCII views. */
 export function useCameraView(env: Environment) {
-  return useState<CameraView>(`camera-${env.id}`, () => structuredClone(DEFAULT_VIEW))
+  return useState<CameraView>(`camera-${env.id}`, () => structuredClone(env.camera ?? DEFAULT_VIEW))
 }
 
 /** The environment named in the route, e.g. /forest/ascii. Pages validate it exists. */
