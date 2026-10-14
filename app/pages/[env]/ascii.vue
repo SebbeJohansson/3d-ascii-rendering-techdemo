@@ -17,6 +17,7 @@ const grid = ref<{ cols: number, rows: number }>()
 const color = usePersistentState('ascii-color', () => true)
 const cellBackground = usePersistentState('ascii-cell-background', () => true)
 const atlas = usePersistentState('ascii-atlas', () => true)
+const stretch = usePersistentState('ascii-stretch', () => false)
 const worker = usePersistentState('ascii-worker', () => true)
 const fontSize = usePersistentState('ascii-font-size', () => 12)
 </script>
@@ -30,6 +31,7 @@ const fontSize = usePersistentState('ascii-font-size', () => 12)
       :color="color"
       :cell-background="cellBackground"
       :atlas="atlas"
+      :stretch="stretch"
       :worker="worker"
       :font-size="fontSize"
       @grid="grid = $event"
@@ -50,6 +52,10 @@ const fontSize = usePersistentState('ascii-font-size', () => 12)
       <label class="toggle" :class="{ disabled: !color }">
         <input v-model="cellBackground" type="checkbox" :disabled="!color">
         Cell backgrounds (solid color)
+      </label>
+      <label class="toggle">
+        <input v-model="stretch" type="checkbox">
+        Stretch contrast (per frame)
       </label>
       <label class="toggle">
         <input v-model="atlas" type="checkbox">

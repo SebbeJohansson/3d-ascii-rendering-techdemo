@@ -29,6 +29,37 @@ export interface DrawOptions {
   cellBackground: boolean
   /** Use the glyph atlas instead of fillText. */
   atlas: boolean
+  /** Stretch this frame's ink range over the whole ramp, so every frame uses all characters. */
+  stretch: boolean
+}
+
+// Share of cells ignored at each end when stretching, so a few outliers don't set the range.
+const STRETCH_CLIP = 0.01
+
+/**
+ * Ink to ramp index for one frame. Without stretching it is the fixed GLYPH table; with it,
+ * the frame's ink range (from a histogram, ignoring the outer 1%) maps onto the whole ramp.
+ * Ink 0 stays 0: those cells hit nothing.
+ */
+function glyphTable(ink: Uint8Array, stretch: boolean) {
+  if (!stretch) return GLYPH
+  const histogram = new Uint32Array(256)
+  for (let i = 0; i < ink.length; i++) histogram[ink[i]!]!++
+  const total = ink.length - histogram[0]!
+  if (!total) return GLYPH
+
+  const clip = total * STRETCH_CLIP
+  let low = 1
+  for (let seen = histogram[1]!; seen <= clip && low < 255; seen += histogram[++low]!);
+  let high = 255
+  for (let seen = histogram[255]!; seen <= clip && high > low; seen += histogram[--high]!);
+
+  const table = new Uint8Array(256)
+  for (let v = 1; v < 256; v++) {
+    const k = high > low ? Math.min(1, Math.max(0, (v - low) / (high - low))) : 1
+    table[v] = 1 + Math.min(RAMP.length - 2, Math.floor(k * (RAMP.length - 1)))
+  }
+  return table
 }
 
 /**
@@ -103,8 +134,9 @@ export function createGlyphRenderer() {
     else drawWithFillText(ctx, ink, rgb, options)
   }
 
-  function drawWithFillText(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground }: DrawOptions) {
+  function drawWithFillText(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground, stretch }: DrawOptions) {
     const backgrounds = color && cellBackground
+    const glyphFor = glyphTable(ink, stretch)
     ctx.fillStyle = hexToCss(sky)
     ctx.fillRect(0, 0, width, height)
     if (!color) ctx.fillStyle = MONO_CSS
@@ -113,7 +145,7 @@ export function createGlyphRenderer() {
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
-        const g = GLYPH[ink[i]!]!
+        const g = glyphFor[ink[i]!]!
         if (g === 0) continue
 
         if (backgrounds) {
@@ -139,10 +171,11 @@ export function createGlyphRenderer() {
     }
   }
 
-  function drawWithAtlas(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground }: DrawOptions) {
+  function drawWithAtlas(ctx: CanvasRenderingContext2D, ink: Uint8Array, rgb: Uint8Array, { sky, color, cellBackground, stretch }: DrawOptions) {
     // Everything the hot loop touches is a local: closure variables per pixel are measurably
     // slower than locals at 100k+ cells.
     const backgrounds = color && cellBackground
+    const glyphFor = glyphTable(ink, stretch)
     const [skyR, skyG, skyB] = hexToBytes(sky)
     const { width: frameW, height: frameH } = frame
     const px = pixels
@@ -158,7 +191,7 @@ export function createGlyphRenderer() {
       const h = Math.min(gh, frameH - oy)
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
-        const g = GLYPH[ink[i]!]!
+        const g = glyphFor[ink[i]!]!
         if (g === 0) continue
 
         const r = color ? rgb[i * 3]! : MONO[0]
