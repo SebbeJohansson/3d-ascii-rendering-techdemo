@@ -4,6 +4,8 @@ Procedurally generated scenes drawn two ways: as a normal 3D view with three.js,
 
 Live demo: https://sebbejohansson.github.io/3dmodel-rendering-techdemo/
 
+<img width="1440" height="832" alt="image" src="https://github.com/user-attachments/assets/f7841753-19cd-43dd-b70a-70cccdc4394d" />
+
 ## What's in it
 
 There are three environments. Each one is generated from a seed, so the same seed always gives the same world.
