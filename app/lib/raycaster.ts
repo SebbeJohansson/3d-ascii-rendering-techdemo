@@ -7,7 +7,7 @@
  */
 import type { Environment, EnvironmentScene, Shape } from '../environments/types'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
-import { hexToBytes, linearRgb, linearToSrgbByte } from './color'
+import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, normalize, scale, type Vec3 } from './math'
 
 export interface RaycastScene {
@@ -18,10 +18,6 @@ export interface RaycastScene {
   colors: Float32Array
   ground: Vec3
   sky: Vec3
-  /** Sky as sRGB bytes, what characters are judged against. */
-  skyBytes: Vec3
-  /** Distance from the sky color to black: the most a cell can stand out from the background. */
-  maxContrast: number
   fogNear: number
   fogFar: number
   half: number
@@ -63,6 +59,15 @@ const SUN_LIGHT = scale(linearRgb(SUN_COLOR), SUN_INTENSITY / Math.PI)
 const HEMI_SKY = scale(linearRgb(HEMI_SKY_COLOR), HEMI_INTENSITY / Math.PI)
 const HEMI_GROUND = scale(linearRgb(HEMI_GROUND_COLOR), HEMI_INTENSITY / Math.PI)
 
+// Ink comes from how much light reaches a surface, not from its color: dark materials (pines)
+// and light ones get the same range of characters, and density shows lit vs shadowed sides.
+const luminance = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b
+// Brightest: facing straight up into the sun. Darkest: facing down, lit by the ground only.
+const MAX_LIGHT = luminance(...HEMI_SKY) + luminance(...SUN_LIGHT)
+const MIN_LIGHT = luminance(...HEMI_GROUND)
+// Even fully lit surfaces get a light character, so they don't vanish into the sky.
+const MIN_INK = 0.25
+
 export function buildRaycastScene(env: Environment, { primitives, extent }: EnvironmentScene): RaycastScene {
   const half = extent / 2
   const count = primitives.length
@@ -94,15 +99,12 @@ export function buildRaycastScene(env: Environment, { primitives, extent }: Envi
   const cellItems = new Uint32Array(cellStart[cells * cells]!)
   for (let i = 0; i < count; i++) forEachCell(i, c => cellItems[cursor[c]!++] = i)
 
-  const skyBytes = hexToBytes(env.sky)
   return {
     bounds,
     shapes,
     colors,
     ground: linearRgb(env.ground),
     sky: linearRgb(env.sky),
-    skyBytes,
-    maxContrast: Math.hypot(...skyBytes),
     fogNear: env.fogNear,
     fogFar: env.fogFar,
     half,
@@ -389,9 +391,9 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
 
 /**
  * Traces one ray per cell of a cols × rows grid, rows top to bottom. Writes the shaded color
- * into `rgb` (3 bytes per cell) and into `ink` how much that color stands out from the sky
- * (0..255). The ink decides how dense a character to draw: 0 means draw nothing, because the
- * cell missed everything or has faded into the fog.
+ * into `rgb` (3 bytes per cell) and into `ink` how shadowed the surface is (0..255). The ink
+ * decides how dense a character to draw: 0 means draw nothing, because the cell missed
+ * everything or has faded into the fog.
  *
  * With rowStart/rowStep it traces only every rowStep-th row starting at rowStart, packed
  * tightly into ink/rgb. Interleaving rows like this gives each worker an even mix of
@@ -404,7 +406,7 @@ export function renderScene(
   const { forward: f, right: r, up: u } = cameraBasis(cam.position, cam.target)
   const tanHalf = Math.tan((cam.fov * Math.PI) / 360)
   const [ox, oy, oz] = cam.position
-  const { sky, skyBytes, maxContrast, ground, colors, fogNear, fogFar } = s
+  const { sky, ground, colors, fogNear, fogFar } = s
 
   for (let y = rowStart, row = 0; y < rows; y += rowStep, row++) {
     const sy = (1 - ((y + 0.5) / rows) * 2) * tanHalf
@@ -459,8 +461,8 @@ export function renderScene(
       rgb[i * 3] = cr
       rgb[i * 3 + 1] = cg
       rgb[i * 3 + 2] = cb
-      const contrast = Math.hypot(cr - skyBytes[0], cg - skyBytes[1], cb - skyBytes[2])
-      ink[i] = Math.min(255, (contrast / maxContrast) * 255)
+      const shadow = Math.min(1, Math.max(0, (MAX_LIGHT - luminance(lr, lg, lb)) / (MAX_LIGHT - MIN_LIGHT)))
+      ink[i] = (MIN_INK + (1 - MIN_INK) * shadow) * (1 - fog) * 255
     }
   }
 }
