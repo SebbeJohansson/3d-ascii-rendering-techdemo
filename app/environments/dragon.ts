@@ -3,13 +3,15 @@ import type { Vec3 } from '../lib/math'
 import { pick, mulberry32 } from '../lib/random'
 import { chain, ellipsoid, taperedCapsule, thickTriangle, type SdfShape } from '../lib/sdf'
 import { polygonize, type SurfaceMesh } from '../lib/surfaceNets'
-import type { Environment } from './types'
+import type { Environment, Mesh } from './types'
 
 // Parts, for coloring.
 const BODY = 0
 const MEMBRANE = 1
 const HORN = 2
 const EYE = 3
+/** Wing bones: colored like the body, but they move with the wing. */
+const WING = 4
 
 /** Color schemes; the seed picks one. */
 const PALETTES = [
@@ -78,8 +80,8 @@ function dragonShapes(voxel: number): SdfShape[] {
     const wrist: Vec3 = [-2, 54, 30 * s]
     const fingers: Vec3[] = [[-12, 52, 54 * s], [-24, 44, 50 * s], [-32, 34, 38 * s], [-30, 28, 22 * s]]
     const flank: Vec3 = [-18, 26, 8 * s]
-    shapes.push(...chain([[...shoulder, 3.2], [...elbow, 2.2], [...wrist, 1.6]], BODY))
-    for (const tip of fingers) shapes.push(taperedCapsule(wrist, tip, 1.3, 0.4, BODY))
+    shapes.push(...chain([[...shoulder, 3.2], [...elbow, 2.2], [...wrist, 1.6]], WING))
+    for (const tip of fingers) shapes.push(taperedCapsule(wrist, tip, 1.3, 0.4, WING))
     for (let f = 0; f < fingers.length - 1; f++) shapes.push(thickTriangle(wrist, fingers[f]!, fingers[f + 1]!, membrane, MEMBRANE))
     shapes.push(thickTriangle(elbow, wrist, fingers[3]!, membrane, MEMBRANE))
     shapes.push(thickTriangle(shoulder, elbow, fingers[3]!, membrane, MEMBRANE))
@@ -87,6 +89,78 @@ function dragonShapes(voxel: number): SdfShape[] {
   }
   return shapes
 }
+
+// Wing flapping. The mesh is bent per frame instead of re-meshed (which takes ~0.25 s):
+// each wing vertex rotates around a hinge running along the body, by the flap angle times
+// its weight. Weights rise from 0 at the shoulder to 1 further out, so the wing bends
+// smoothly out of the body, and the outer wing gets an extra, slightly delayed stroke.
+const HINGE_PIVOT: Vec3 = [6, 30, 8] // z is mirrored per side
+const HINGE_AXIS: Vec3 = (() => {
+  const d: Vec3 = [24, 4, 0] // from the flank to the shoulder, along the body
+  const l = Math.hypot(...d)
+  return [d[0] / l, d[1] / l, d[2] / l]
+})()
+/** Wing beats per second, in radians. */
+const FLAP_SPEED = 2 * Math.PI * 0.6
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
+/** Which vertices move, how much, and their rest pose. Built once per mesh. */
+interface WingRig {
+  vertices: Uint32Array
+  /** Weight of the whole-wing flap, rising from the shoulder. */
+  inner: Float32Array
+  /** Weight of the extra outer-wing stroke. */
+  outer: Float32Array
+  /** +1 or -1: which side of the body. */
+  side: Int8Array
+  restPositions: Float32Array
+  restNormals: Float32Array
+}
+
+function buildWingRig(mesh: SurfaceMesh): WingRig {
+  const vertices: number[] = []
+  const inner: number[] = []
+  const outer: number[] = []
+  const side: number[] = []
+  for (let v = 0; v < mesh.parts.length; v++) {
+    const part = mesh.parts[v]!
+    if (part !== MEMBRANE && part !== WING) continue
+    const z = mesh.positions[v * 3 + 2]!
+    const w = smoothstep(10, 18, Math.abs(z))
+    if (w === 0) continue
+    vertices.push(v)
+    inner.push(w)
+    outer.push(smoothstep(26, 44, Math.abs(z)))
+    side.push(z < 0 ? -1 : 1)
+  }
+  return {
+    vertices: new Uint32Array(vertices),
+    inner: new Float32Array(inner),
+    outer: new Float32Array(outer),
+    side: new Int8Array(side),
+    restPositions: mesh.positions,
+    restNormals: mesh.normals,
+  }
+}
+
+/**
+ * Rotates (x, y, z) around HINGE_AXIS by an angle (Rodrigues' formula), adds (tx, ty, tz)
+ * and writes the result to out at o.
+ */
+function rotateInto(out: Float32Array, o: number, x: number, y: number, z: number, cos: number, sin: number, tx = 0, ty = 0, tz = 0) {
+  const [ax, ay, az] = HINGE_AXIS
+  const dot = (ax * x + ay * y + az * z) * (1 - cos)
+  out[o] = x * cos + (ay * z - az * y) * sin + ax * dot + tx
+  out[o + 1] = y * cos + (az * x - ax * z) * sin + ay * dot + ty
+  out[o + 2] = z * cos + (ax * y - ay * x) * sin + az * dot + tz
+}
+
+const rigs = new Map<SurfaceMesh, WingRig>()
+/** Links each generated (and therefore animatable) mesh to its rig. */
+const meshRigs = new WeakMap<Mesh, WingRig>()
 
 // Meshing is the slow part and doesn't depend on the seed, so keep one mesh per detail level.
 const meshCache = new Map<number, SurfaceMesh>()
@@ -116,7 +190,7 @@ export const dragon: Environment = {
     const palette = pick(mulberry32(seed), PALETTES)
     const body = linearRgb(palette.body)
     const belly = linearRgb(palette.belly)
-    const byPart = [body, linearRgb(palette.membrane), linearRgb(palette.horn), linearRgb(palette.eye)]
+    const byPart = [body, linearRgb(palette.membrane), linearRgb(palette.horn), linearRgb(palette.eye), body]
 
     // Per-vertex colors. The underside of the body fades into the lighter belly color.
     const count = mesh.parts.length
@@ -131,12 +205,44 @@ export const dragon: Environment = {
       colors.set(color, v * 3)
     }
 
+    let rig = rigs.get(mesh)
+    if (!rig) {
+      rig = buildWingRig(mesh)
+      rigs.set(mesh, rig)
+    }
+    // Own copies of positions and normals: animate() writes into them every frame.
+    const posed: Mesh = { positions: mesh.positions.slice(), normals: mesh.normals.slice(), colors, indices: mesh.indices, roughness: 0.8 }
+    meshRigs.set(posed, rig)
+
     return {
       primitives: [],
-      meshes: [{ positions: mesh.positions, normals: mesh.normals, colors, indices: mesh.indices, roughness: 0.8 }],
+      meshes: [posed],
       // Big enough that the floor's edge disappears into the fog.
       extent: 3000,
       summary: `${palette.name} dragon · ${(mesh.indices.length / 3).toLocaleString('en-US')} triangles`,
+    }
+  },
+
+  animate(scene, time) {
+    const mesh = scene.meshes?.[0]
+    const rig = mesh && meshRigs.get(mesh)
+    if (!rig) return
+    const { vertices, inner, outer, side, restPositions, restNormals } = rig
+    // Positive angles swing the wings down. The whole wing beats around a slightly raised
+    // middle; the outer part adds a delayed stroke on top, like a wave along the wing.
+    const flap = 0.15 + 0.45 * Math.sin(time * FLAP_SPEED)
+    const lag = 0.35 * Math.sin(time * FLAP_SPEED - 0.7)
+    for (let k = 0; k < vertices.length; k++) {
+      const o = vertices[k]! * 3
+      const s = side[k]!
+      const angle = s * (inner[k]! * flap + outer[k]! * lag)
+      const cos = Math.cos(angle)
+      const sin = Math.sin(angle)
+      // Rotate around the hinge: relative to the pivot for positions, as-is for normals.
+      const [px, py] = HINGE_PIVOT
+      const pz = HINGE_PIVOT[2] * s
+      rotateInto(mesh.positions, o, restPositions[o]! - px, restPositions[o + 1]! - py, restPositions[o + 2]! - pz, cos, sin, px, py, pz)
+      rotateInto(mesh.normals, o, restNormals[o]!, restNormals[o + 1]!, restNormals[o + 2]!, cos, sin)
     }
   },
 }
