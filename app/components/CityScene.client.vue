@@ -9,6 +9,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   stats: [stats: { buildings: number, backend: string }]
+  perf: [perf: FramePerf]
 }>()
 
 const container = ref<HTMLDivElement>()
@@ -18,6 +19,7 @@ let renderer: THREE.WebGPURenderer | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
 let unmounted = false
+const meter = createFrameMeter(perf => emit('perf', perf))
 
 function rebuild() {
   const buildings = buildCity(props.seed, props.blocks)
@@ -49,8 +51,12 @@ onMounted(async () => {
   resize()
 
   renderer.setAnimationLoop(() => {
+    // CPU time to update and submit the frame. The GPU finishes the work asynchronously.
+    const start = performance.now()
     controls!.update()
     renderer!.render(scene, camera)
+    meter.frame(performance.now() - start)
+    meter.tick()
   })
 })
 

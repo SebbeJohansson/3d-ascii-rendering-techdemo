@@ -1,6 +1,7 @@
 <script setup lang="ts">
 defineProps<{
   stats?: { buildings: number, backend: string }
+  perf?: FramePerf
 }>()
 
 const { seed, blocks } = useCitySettings()
@@ -34,6 +35,13 @@ function randomize() {
     </button>
     <p v-if="stats" class="stats">
       {{ stats.buildings }} buildings · {{ stats.backend }}
+    </p>
+    <p v-if="perf" class="perf">
+      <span>{{ perf.fps >= 1 ? `${Math.round(perf.fps)} fps` : 'idle' }}</span>
+      <span>{{ perf.ms.toFixed(1) }} ms/frame</span>
+    </p>
+    <p v-if="perf?.parts" class="perf parts">
+      <span v-for="(ms, name) in perf.parts" :key="name">{{ name }} {{ ms.toFixed(1) }}</span>
     </p>
   </aside>
 </template>
@@ -93,6 +101,19 @@ button {
   color: white;
   font-weight: 600;
   cursor: pointer;
+}
+
+.perf {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  font: 600 12px ui-monospace, Menlo, Consolas, monospace;
+  color: #2b5d8a;
+}
+
+.perf.parts {
+  font-weight: 400;
+  color: #555;
 }
 
 .stats {

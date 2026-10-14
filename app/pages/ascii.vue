@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const { seed, blocks } = useCitySettings()
 const stats = ref<{ buildings: number, backend: string }>()
+const perf = ref<FramePerf>()
 const color = useState('ascii-color', () => true)
 const cellBackground = useState('ascii-cell-background', () => true)
 const atlas = useState('ascii-atlas', () => true)
@@ -21,8 +22,9 @@ const grid = ref<{ cols: number, rows: number }>()
       :font-size="fontSize"
       @grid="grid = $event"
       @stats="stats = $event"
+      @perf="perf = $event"
     />
-    <CityControls :stats="stats">
+    <CityControls :stats="stats" :perf="perf">
       <label>
         Resolution: {{ fontSize }} px characters
         <span v-if="grid" class="grid">{{ grid.cols }} × {{ grid.rows }} = {{ (grid.cols * grid.rows).toLocaleString('en-US') }} cells</span>

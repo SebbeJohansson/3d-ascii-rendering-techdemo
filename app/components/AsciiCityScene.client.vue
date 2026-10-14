@@ -20,6 +20,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   stats: [stats: { buildings: number, backend: string }]
+  perf: [perf: FramePerf]
   grid: [grid: { cols: number, rows: number }]
 }>()
 
@@ -51,6 +52,7 @@ const WORKER_COUNT = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4
 let workers: Worker[] = []
 /** Workers still tracing the current frame. 0 means no frame is in flight. */
 let pending = 0
+let frameStart = 0
 let nextInk: Uint8Array = new Uint8Array(0)
 let nextRgb: Uint8Array = new Uint8Array(0)
 let ctx: CanvasRenderingContext2D | undefined
@@ -65,6 +67,7 @@ let width = 0
 let height = 0
 let ink: Uint8Array = new Uint8Array(0)
 let rgb: Uint8Array = new Uint8Array(0)
+const meter = createFrameMeter(perf => emit('perf', perf))
 
 // Glyph atlas: every ramp character drawn once in white, then kept as alpha masks.
 // Each frame writes glyph pixels straight into an ImageData buffer and shows it with one
@@ -132,9 +135,18 @@ function onWorkerMessage(msg: WorkerResponse) {
     dirty = true
     return
   }
+  // Wall-clock time across all workers, including messaging.
+  const traceMs = performance.now() - frameStart
   ink = nextInk
   rgb = nextRgb
-  draw()
+  const drawMs = timed(draw)
+  meter.frame(traceMs + drawMs, { trace: traceMs, draw: drawMs })
+}
+
+function timed(fn: () => void) {
+  const start = performance.now()
+  fn()
+  return performance.now() - start
 }
 
 function camera(): Camera {
@@ -313,6 +325,7 @@ function drawWithAtlas() {
 // Only re-render when something changed: the image is static between camera moves.
 function tick() {
   frameId = requestAnimationFrame(tick)
+  meter.tick()
   if (!dirty || !cols) return
 
   if (workers.length) {
@@ -320,6 +333,7 @@ function tick() {
     if (pending) return
     dirty = false
     pending = workers.length
+    frameStart = performance.now()
     nextInk = new Uint8Array(cols * rows)
     nextRgb = new Uint8Array(cols * rows * 3)
     const cam = camera()
@@ -336,8 +350,9 @@ function tick() {
 
   if (!scene) return
   dirty = false
-  renderCity(scene!, camera(), cols, rows, ink, rgb)
-  draw()
+  const traceMs = timed(() => renderCity(scene!, camera(), cols, rows, ink, rgb))
+  const drawMs = timed(draw)
+  meter.frame(traceMs + drawMs, { trace: traceMs, draw: drawMs })
 }
 
 // Orbit controls with the same feel and limits as three's OrbitControls in the 3D view:
