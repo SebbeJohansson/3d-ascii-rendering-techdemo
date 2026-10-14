@@ -12,6 +12,14 @@ function randomize() {
 
 <template>
   <aside class="panel">
+    <nav>
+      <NuxtLink to="/">
+        3D
+      </NuxtLink>
+      <NuxtLink to="/ascii">
+        ASCII
+      </NuxtLink>
+    </nav>
     <label>
       Seed
       <input v-model.number="seed" type="number">
@@ -20,6 +28,7 @@ function randomize() {
       Size: {{ blocks }} × {{ blocks }} blocks
       <input v-model.number="blocks" type="range" min="2" max="30">
     </label>
+    <slot />
     <button type="button" @click="randomize">
       New city
     </button>
@@ -43,6 +52,30 @@ function randomize() {
   backdrop-filter: blur(6px);
   border-radius: 10px;
   box-shadow: 0 4px 20px rgb(0 0 0 / 0.15);
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgb(0 0 0 / 0.08);
+  border-radius: 7px;
+}
+
+nav a {
+  flex: 1;
+  padding: 5px;
+  border-radius: 5px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+  text-decoration: none;
+}
+
+nav a.router-link-exact-active {
+  background: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
 }
 
 .panel :deep(label) {

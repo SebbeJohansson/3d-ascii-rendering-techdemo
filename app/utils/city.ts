@@ -8,7 +8,7 @@ export const SKY_COLOR = 0xbfd4e6
 export const FOG_NEAR = 400
 export const FOG_FAR = 1400
 
-// Lighting for the 3D view.
+// Lighting, shared so the ASCII ray tracer can reproduce the 3D view's shading.
 export const SUN_COLOR = 0xfff4e0
 export const SUN_INTENSITY = 2.4
 export const SUN_POSITION: [number, number, number] = [300, 500, 200]
