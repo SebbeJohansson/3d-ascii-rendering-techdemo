@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import * as THREE from 'three/webgpu'
+import type * as THREE from 'three/webgpu'
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import type { Environment } from '~/environments'
+import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
+import { backendName, createEnvironmentScene, createOrbitControls, getSharedRenderer } from '~/lib/three'
 
 const props = defineProps<{
+  env: Environment
   seed: number
-  blocks: number
+  size: number
 }>()
 
 const emit = defineEmits<{
-  stats: [stats: { buildings: number, backend: string }]
+  stats: [stats: string]
   perf: [perf: FramePerf]
 }>()
 
 const container = ref<HTMLDivElement>()
+const view = useCameraView(props.env)
 
-const { scene, camera, buildCity, dispose } = createCityScene()
+const { scene, camera, build, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
@@ -22,8 +27,8 @@ let unmounted = false
 const meter = createFrameMeter(perf => emit('perf', perf))
 
 function rebuild() {
-  const buildings = buildCity(props.seed, props.blocks)
-  emit('stats', { buildings, backend: renderer ? backendName(renderer) : '' })
+  const summary = build(props.env, props.seed, props.size)
+  emit('stats', `${summary} · ${renderer ? backendName(renderer) : ''}`)
 }
 
 function resize() {
@@ -43,7 +48,7 @@ onMounted(async () => {
   renderer = gpu
   container.value!.appendChild(renderer.domElement)
 
-  controls = createOrbitControls(camera, renderer.domElement)
+  controls = createOrbitControls(camera, renderer.domElement, view)
   rebuild()
 
   resizeObserver = new ResizeObserver(resize)
@@ -60,7 +65,7 @@ onMounted(async () => {
   })
 })
 
-watch(() => [props.seed, props.blocks], rebuild)
+watch(() => [props.env, props.seed, props.size], rebuild)
 
 onBeforeUnmount(() => {
   unmounted = true

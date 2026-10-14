@@ -1,23 +1,38 @@
 <script setup lang="ts">
-defineProps<{
-  stats?: { buildings: number, backend: string }
+import { ENVIRONMENTS, type Environment } from '~/environments'
+import type { FramePerf } from '~/lib/frameMeter'
+
+const props = defineProps<{
+  env: Environment
+  /** Which view this panel sits on, so the tabs can link to the other one. */
+  mode: '3d' | 'ascii'
+  stats?: string
   perf?: FramePerf
 }>()
 
-const { seed, blocks } = useCitySettings()
+const { seed, size } = useSceneSettings(props.env)
 
 function randomize() {
   seed.value = Math.floor(Math.random() * 1e6)
+}
+
+function viewPath(envId: string, mode: '3d' | 'ascii') {
+  return mode === '3d' ? `/${envId}` : `/${envId}/ascii`
 }
 </script>
 
 <template>
   <aside class="panel">
     <nav>
-      <NuxtLink to="/">
+      <NuxtLink v-for="e in ENVIRONMENTS" :key="e.id" :to="viewPath(e.id, mode)" :class="{ active: e.id === env.id }">
+        {{ e.name }}
+      </NuxtLink>
+    </nav>
+    <nav>
+      <NuxtLink :to="viewPath(env.id, '3d')" :class="{ active: mode === '3d' }">
         3D
       </NuxtLink>
-      <NuxtLink to="/ascii">
+      <NuxtLink :to="viewPath(env.id, 'ascii')" :class="{ active: mode === 'ascii' }">
         ASCII
       </NuxtLink>
     </nav>
@@ -26,15 +41,15 @@ function randomize() {
       <input v-model.number="seed" type="number">
     </label>
     <label>
-      Size: {{ blocks }} × {{ blocks }} blocks
-      <input v-model.number="blocks" type="range" min="2" max="30">
+      Size: {{ env.size.label(size) }}
+      <input v-model.number="size" type="range" :min="env.size.min" :max="env.size.max">
     </label>
     <slot />
     <button type="button" @click="randomize">
-      New city
+      New {{ env.name.toLowerCase() }}
     </button>
     <p v-if="stats" class="stats">
-      {{ stats.buildings }} buildings · {{ stats.backend }}
+      {{ stats }}
     </p>
     <p v-if="perf" class="perf">
       <span>{{ perf.fps >= 1 ? `${Math.round(perf.fps)} fps` : 'idle' }}</span>
@@ -81,7 +96,7 @@ nav a {
   text-decoration: none;
 }
 
-nav a.router-link-exact-active {
+nav a.active {
   background: white;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
 }

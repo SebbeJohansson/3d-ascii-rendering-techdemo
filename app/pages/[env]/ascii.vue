@@ -1,20 +1,32 @@
 <script setup lang="ts">
-const { seed, blocks } = useCitySettings()
-const stats = ref<{ buildings: number, backend: string }>()
+import { findEnvironment } from '~/environments'
+import type { FramePerf } from '~/lib/frameMeter'
+
+definePageMeta({
+  validate: route => findEnvironment(route.params.env) !== undefined,
+  // Remount when switching environment, so camera and settings are re-read for the new one.
+  key: route => route.fullPath,
+})
+
+const env = useRouteEnvironment()
+const { seed, size } = useSceneSettings(env.value)
+const stats = ref<string>()
 const perf = ref<FramePerf>()
+const grid = ref<{ cols: number, rows: number }>()
+// Display settings are shared by all environments.
 const color = usePersistentState('ascii-color', () => true)
 const cellBackground = usePersistentState('ascii-cell-background', () => true)
 const atlas = usePersistentState('ascii-atlas', () => true)
 const worker = usePersistentState('ascii-worker', () => true)
 const fontSize = usePersistentState('ascii-font-size', () => 12)
-const grid = ref<{ cols: number, rows: number }>()
 </script>
 
 <template>
   <div class="page">
-    <AsciiCityScene
+    <AsciiScene
+      :env="env"
       :seed="seed"
-      :blocks="blocks"
+      :size="size"
       :color="color"
       :cell-background="cellBackground"
       :atlas="atlas"
@@ -24,7 +36,7 @@ const grid = ref<{ cols: number, rows: number }>()
       @stats="stats = $event"
       @perf="perf = $event"
     />
-    <CityControls :stats="stats" :perf="perf">
+    <SceneControls :env="env" mode="ascii" :stats="stats" :perf="perf">
       <label>
         Resolution: {{ fontSize }} px characters
         <span v-if="grid" class="grid">{{ grid.cols }} × {{ grid.rows }} = {{ (grid.cols * grid.rows).toLocaleString('en-US') }} cells</span>
@@ -47,11 +59,16 @@ const grid = ref<{ cols: number, rows: number }>()
         <input v-model="worker" type="checkbox">
         Ray trace in Web Workers
       </label>
-    </CityControls>
+    </SceneControls>
   </div>
 </template>
 
 <style scoped>
+.toggle {
+  flex-direction: row !important;
+  align-items: center;
+}
+
 .toggle.disabled {
   opacity: 0.5;
 }
@@ -63,10 +80,5 @@ const grid = ref<{ cols: number, rows: number }>()
 
 .reversed {
   direction: rtl;
-}
-
-.toggle {
-  flex-direction: row !important;
-  align-items: center;
 }
 </style>
