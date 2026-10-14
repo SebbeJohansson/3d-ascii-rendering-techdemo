@@ -49,7 +49,7 @@ export function createEnvironmentScene() {
   /** Replaces the current content. Returns the environment's summary, e.g. "530 buildings". */
   function build(env: Environment, seed: number, size: number) {
     clear()
-    const { primitives, extent, summary } = env.generate(seed, size)
+    const { primitives, meshes = [], extent, summary } = env.generate(seed, size)
 
     scene.background = new THREE.Color(env.sky)
     scene.fog = new THREE.Fog(env.sky, env.fogNear, env.fogFar)
@@ -85,6 +85,21 @@ export function createEnvironmentScene() {
         mesh.setMatrixAt(i, m)
         mesh.setColorAt(i, color.setHex(p.color))
       })
+      content.add(mesh)
+    }
+
+    for (const m of meshes) {
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(m.positions, 3))
+      geometry.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
+      geometry.setAttribute('color', new THREE.BufferAttribute(m.colors, 3))
+      geometry.setIndex(new THREE.BufferAttribute(m.indices, 1))
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({ vertexColors: true, roughness: m.roughness ?? 1, metalness: m.metalness ?? 0 }),
+      )
+      mesh.castShadow = true
+      mesh.receiveShadow = true
       content.add(mesh)
     }
     return summary

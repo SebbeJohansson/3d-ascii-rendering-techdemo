@@ -4,9 +4,11 @@
  *
  * Primitives are bucketed by their bounding boxes into a uniform grid on the ground plane,
  * so a ray only tests the primitives in the cells it actually crosses (2D DDA traversal).
+ * Triangle meshes go into a BVH (see bvh.ts) instead.
  */
 import type { Environment, EnvironmentScene, Shape } from '../environments/types'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
+import { buildBvh, bvhHit, intersectBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, normalize, scale, type Vec3 } from './math'
 
@@ -30,6 +32,13 @@ export interface RaycastScene {
   /** Last ray id that tested each primitive, so one spanning several cells is tested once per ray. */
   stamp: Uint32Array
   rayId: number
+  /** All of the environment's meshes merged into one, if it has any. */
+  mesh?: {
+    bvh: Bvh
+    normals: Float32Array
+    /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
+    albedo: Float32Array
+  }
 }
 
 export interface Camera {
@@ -50,6 +59,7 @@ const SPHERE = 3
 const SHAPE_CODES: Record<Shape, number> = { box: BOX, cylinder: CYLINDER, cone: CONE, sphere: SPHERE }
 const GROUND = -1
 const MISS = -2
+const MESH = -3
 
 // Shading follows three's MeshStandardMaterial so both views match: colors are converted to
 // linear light, lit with Lambert diffuse (albedo / π × irradiance) from the sun plus a hemisphere
@@ -68,7 +78,7 @@ const MIN_LIGHT = luminance(...HEMI_GROUND)
 // Even fully lit surfaces get a light character, so they don't vanish into the sky.
 const MIN_INK = 0.25
 
-export function buildRaycastScene(env: Environment, { primitives, extent }: EnvironmentScene): RaycastScene {
+export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene): RaycastScene {
   const half = extent / 2
   const count = primitives.length
   const bounds = new Float32Array(count * 6)
@@ -99,6 +109,29 @@ export function buildRaycastScene(env: Environment, { primitives, extent }: Envi
   const cellItems = new Uint32Array(cellStart[cells * cells]!)
   for (let i = 0; i < count; i++) forEachCell(i, c => cellItems[cursor[c]!++] = i)
 
+  // Merge every mesh into one, so one BVH covers them all.
+  let mesh: RaycastScene['mesh']
+  if (meshes.length) {
+    const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
+    const positions = new Float32Array(vertexCount * 3)
+    const normals = new Float32Array(vertexCount * 3)
+    const albedo = new Float32Array(vertexCount * 3)
+    const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0))
+    let v = 0
+    let t = 0
+    for (const m of meshes) {
+      positions.set(m.positions, v * 3)
+      normals.set(m.normals, v * 3)
+      const keep = 1 - (m.metalness ?? 0)
+      for (let i = 0; i < m.colors.length; i++) albedo[v * 3 + i] = m.colors[i]! * keep
+      for (let i = 0; i < m.indices.length; i++) indices[t + i] = m.indices[i]! + v
+      v += m.positions.length / 3
+      t += m.indices.length
+    }
+    for (let i = 1; i < positions.length; i += 3) maxHeight = Math.max(maxHeight, positions[i]!)
+    mesh = { bvh: buildBvh(positions, indices), normals, albedo }
+  }
+
   return {
     bounds,
     shapes,
@@ -115,11 +148,12 @@ export function buildRaycastScene(env: Environment, { primitives, extent }: Envi
     cellItems,
     stamp: new Uint32Array(count),
     rayId: 0,
+    mesh,
   }
 }
 
 /** Result of the last trace() call. Reused to avoid allocating per ray. */
-const hit = { t: 0, prim: MISS, nx: 0, ny: 0, nz: 0 }
+const hit = { t: 0, prim: MISS, nx: 0, ny: 0, nz: 0, triangle: 0, u: 0, v: 0 }
 
 // Surface normal of the last candidate hit, written by the shape tests in trace() and below.
 let cnx = 0
@@ -299,6 +333,25 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
     }
   }
 
+  // Meshes: one BVH query. The grid walk below then only accepts primitives closer than this.
+  if (s.mesh) {
+    const t = intersectBvh(s.mesh.bvh, ox, oy, oz, dx, dy, dz, best, anyHit)
+    if (t < best) {
+      if (anyHit) return true
+      best = t
+      hit.prim = MESH
+      hit.triangle = bvhHit.triangle
+      hit.u = bvhHit.u
+      hit.v = bvhHit.v
+    }
+  }
+
+  // No primitives (e.g. a mesh-only environment on a huge floor): skip walking empty cells.
+  if (s.cellItems.length === 0) {
+    hit.t = best
+    return best < Infinity
+  }
+
   if (++s.rayId === 0xFFFFFFFF) {
     s.stamp.fill(0)
     s.rayId = 1
@@ -426,11 +479,46 @@ export function renderScene(
         continue
       }
 
-      const { t, prim, nx, ny, nz } = hit
+      const { t, prim } = hit
+      let { nx, ny, nz } = hit
       // Scalars instead of a [r, g, b] array: no allocation per hit.
-      const br = prim === GROUND ? ground[0] : colors[prim * 3]!
-      const bg = prim === GROUND ? ground[1] : colors[prim * 3 + 1]!
-      const bb = prim === GROUND ? ground[2] : colors[prim * 3 + 2]!
+      let br: number
+      let bg: number
+      let bb: number
+      if (prim === MESH) {
+        // Blend the triangle's three vertex normals and colors by where the ray hit it,
+        // which makes the faceted mesh look smooth.
+        const { normals, albedo, bvh } = s.mesh!
+        const t3 = hit.triangle * 3
+        const i0 = bvh.indices[t3]! * 3
+        const i1 = bvh.indices[t3 + 1]! * 3
+        const i2 = bvh.indices[t3 + 2]! * 3
+        const w1 = hit.u
+        const w2 = hit.v
+        const w0 = 1 - w1 - w2
+        nx = normals[i0]! * w0 + normals[i1]! * w1 + normals[i2]! * w2
+        ny = normals[i0 + 1]! * w0 + normals[i1 + 1]! * w1 + normals[i2 + 1]! * w2
+        nz = normals[i0 + 2]! * w0 + normals[i1 + 2]! * w1 + normals[i2 + 2]! * w2
+        const nl = Math.hypot(nx, ny, nz) || 1
+        // Seen from behind (e.g. through a gap): shade the side facing the camera.
+        const flip = nx * dx + ny * dy + nz * dz > 0 ? -1 / nl : 1 / nl
+        nx *= flip
+        ny *= flip
+        nz *= flip
+        br = albedo[i0]! * w0 + albedo[i1]! * w1 + albedo[i2]! * w2
+        bg = albedo[i0 + 1]! * w0 + albedo[i1 + 1]! * w1 + albedo[i2 + 1]! * w2
+        bb = albedo[i0 + 2]! * w0 + albedo[i1 + 2]! * w1 + albedo[i2 + 2]! * w2
+      }
+      else if (prim === GROUND) {
+        br = ground[0]
+        bg = ground[1]
+        bb = ground[2]
+      }
+      else {
+        br = colors[prim * 3]!
+        bg = colors[prim * 3 + 1]!
+        bb = colors[prim * 3 + 2]!
+      }
 
       // Hemisphere light: blend of ground and sky color by how much the surface points up.
       const w = ny * 0.5 + 0.5
@@ -441,9 +529,10 @@ export function renderScene(
       // Sun light, blocked if a shadow ray toward the sun hits anything.
       const facing = nx * SUN[0] + ny * SUN[1] + nz * SUN[2]
       if (facing > 0) {
-        const px = ox + dx * t + nx * 0.01
-        const py = oy + dy * t + ny * 0.01
-        const pz = oz + dz * t + nz * 0.01
+        // Start the shadow ray slightly off the surface so it doesn't hit its own surface.
+        const px = ox + dx * t + nx * 0.05
+        const py = oy + dy * t + ny * 0.05
+        const pz = oz + dz * t + nz * 0.05
         if (!trace(s, px, py, pz, SUN[0], SUN[1], SUN[2], true)) {
           lr += SUN_LIGHT[0] * facing
           lg += SUN_LIGHT[1] * facing

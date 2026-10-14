@@ -21,8 +21,27 @@ export interface Primitive {
   metalness?: number
 }
 
+/**
+ * A free-form triangle mesh, for shapes primitives can't express (like the dragon).
+ * Rendered by three directly and by the ray tracer through a BVH.
+ */
+export interface Mesh {
+  positions: Float32Array
+  /** Unit normal per vertex, for smooth shading. */
+  normals: Float32Array
+  /** Linear-light r, g, b per vertex, in 0..1 (three's convention for vertex colors). */
+  colors: Float32Array
+  /** Three vertex indices per triangle. */
+  indices: Uint32Array
+  /** Defaults to 1 (fully matte). */
+  roughness?: number
+  /** Defaults to 0. */
+  metalness?: number
+}
+
 export interface EnvironmentScene {
   primitives: Primitive[]
+  meshes?: Mesh[]
   /** Side length of the square ground, centered on the origin. */
   extent: number
   /** Shown in the panel, e.g. "530 buildings". */
