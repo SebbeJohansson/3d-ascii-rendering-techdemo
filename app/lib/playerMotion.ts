@@ -40,6 +40,7 @@ export interface PlayerMotion {
 export interface World {
   primitives: Primitive[]
   extent: number
+  groundHeight?: (x: number, z: number) => number
 }
 
 const MIN_PITCH = 0.02
@@ -93,9 +94,12 @@ function recenterChase(chase: ChaseCamera, player: Player, dt: number) {
   chase.zoom = Math.exp(Math.log(chase.zoom) * (1 - k))
 }
 
-/** Where a flyer starts: clear above everything in the environment. */
-function takeoffHeight(world: World) {
-  return world.primitives.reduce((top, p) => Math.max(top, p.y + p.height), 0) + TAKEOFF_CLEARANCE
+/** Height of the land at (x, z): 0 unless the environment has hills or islands. */
+const groundAt = (world: World, x: number, z: number) => world.groundHeight?.(x, z) ?? 0
+
+/** Where a flyer starts at (x, z): clear above everything in the environment. */
+function takeoffHeight(world: World, x: number, z: number) {
+  return world.primitives.reduce((top, p) => Math.max(top, p.y + p.height), groundAt(world, x, z)) + TAKEOFF_CLEARANCE
 }
 
 /**
@@ -106,7 +110,7 @@ export function spawnPose(env: Environment, size: number, view: CameraView, play
   const { position: p, target: t } = view
   const [x, , z] = env.spawn?.(size, view) ?? t
   const heading = Math.atan2(-(t[2] - p[2]), t[0] - p[0])
-  return { position: [x, player.flies ? takeoffHeight(world) : 0, z], heading }
+  return { position: [x, player.flies ? takeoffHeight(world, x, z) : groundAt(world, x, z), z], heading }
 }
 
 /**
@@ -114,7 +118,7 @@ export function spawnPose(env: Environment, size: number, view: CameraView, play
  * was; a car drops to the ground under the dragon.
  */
 export function swapPose({ position: [x, y, z], heading }: PlayerPose, player: Player, world: World): PlayerPose {
-  return { position: [x, player.flies ? Math.max(y, takeoffHeight(world)) : 0, z], heading }
+  return { position: [x, player.flies ? Math.max(y, takeoffHeight(world, x, z)) : groundAt(world, x, z), z], heading }
 }
 
 /** Moves the player for a frame `dt` seconds long. Updates motion.speed. */
@@ -137,7 +141,7 @@ export function stepPlayer(player: Player, pose: PlayerPose, motion: PlayerMotio
   if (player.flies) y = Math.min(MAX_ALTITUDE, Math.max(0, y + climb * CLIMB_SPEED * dt))
 
   // Keep out of buildings, trees and rocks, and on the environment's ground.
-  const collided = resolveCollisions(world.primitives, [x, y, z], player.collider, player.flies)
+  const collided = resolveCollisions(world.primitives, [x, y, z], player.collider, player.flies, groundAt(world, x, z))
   ;[x, y, z] = collided.position
   // Scraping along a wall bleeds off speed.
   if (collided.hit) speed *= Math.exp(-4 * dt)

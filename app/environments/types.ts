@@ -51,6 +51,11 @@ export interface EnvironmentScene {
   extent: number
   /** Shown in the panel, e.g. "530 buildings". */
   summary: string
+  /**
+   * Height of the land at (x, z), for environments whose land isn't flat (islands). Players
+   * stand on it. Defaults to the flat ground at y = 0.
+   */
+  groundHeight?: (x: number, z: number) => number
 }
 
 export interface Environment {
@@ -58,6 +63,12 @@ export interface Environment {
   name: string
   sky: number
   ground: number
+  /**
+   * Makes the ground a calm sea: it reaches the horizon and mirrors the sky and everything
+   * above it. This is how much it reflects looking straight down, 0..1; at grazing angles it
+   * rises toward a full mirror (Fresnel).
+   */
+  reflectance?: number
   fogNear: number
   fogFar: number
   /** Where the camera starts. Defaults to an overview from above. */

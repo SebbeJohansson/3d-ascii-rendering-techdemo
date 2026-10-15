@@ -4,14 +4,20 @@
  * (buildRaycastScene, the same grid and BVHs), uploaded once, and every frame one compute
  * shader invocation per cell traces it (raytrace.wgsl.ts). The result is read back into the
  * same TracedFrame the CPU tracers produce, so drawing, outlines and the lens are shared.
+ *
+ * Given a canvas, it skips the readback instead: a second shader (present.wgsl.ts) draws the
+ * output buffer onto the canvas, one cell per pixel, and onFrame gets a frame with only its
+ * size and timing.
  */
 import { getEnvironment } from '../../environments'
 import type { EnvironmentScene } from '../../environments/types'
 import { NOON } from '../../environments/lighting'
 import type { Bvh } from '../bvh'
+import { linearToSrgbByte } from '../color'
 import { cameraBasis } from '../math'
 import { buildRaycastScene, type RaycastPlayer, type RaycastScene } from '../raycaster'
 import { createPlayerSlot, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
+import { PRESENT_WGSL } from './present.wgsl'
 import { RAYTRACE_WGSL } from './raytrace.wgsl'
 
 const WORKGROUP = 8
@@ -55,9 +61,11 @@ function packBvh(source: { bvh: Bvh, normals: Float32Array, albedo: Float32Array
 
 type PackedBvh = ReturnType<typeof packBvh>
 
-export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
+export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTMLCanvasElement): Tracer {
   let device: GPUDevice | null | undefined
   let pipeline: GPUComputePipeline | undefined
+  /** With a canvas: what draws the output buffer onto it. */
+  let present: { context: GPUCanvasContext, pipeline: GPURenderPipeline, params: GPUBuffer, bindGroup?: GPUBindGroup } | undefined
   let disposed = false
   let busy = false
 
@@ -86,6 +94,21 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
       layout: 'auto',
       compute: { module: d.createShaderModule({ code: RAYTRACE_WGSL }), entryPoint: 'main' },
     })
+    if (canvas) {
+      const format = navigator.gpu.getPreferredCanvasFormat()
+      const context = canvas.getContext('webgpu')!
+      context.configure({ device: d, format, alphaMode: 'opaque' })
+      const module = d.createShaderModule({ code: PRESENT_WGSL })
+      present = {
+        context,
+        pipeline: d.createRenderPipeline({
+          layout: 'auto',
+          vertex: { module, entryPoint: 'vs' },
+          fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+        }),
+        params: d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+      }
+    }
     if (pendingScene) setScene(...pendingScene)
   })
 
@@ -173,7 +196,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     set(7, L.hemiGround, L.night)
     set(8, L.sky, L.maxLight)
     set(9, L.windowGlow, L.minLight)
-    set(10, s.ground, 0)
+    set(10, s.ground, s.reflectance)
     const p = s.player
     set(11, p ? [p.x, p.y, p.z] : [0, 0, 0], p?.scale ?? 1)
     set(12, [p?.cos ?? 1, p?.sin ?? 0, 0], 0)
@@ -197,6 +220,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
       readback: device!.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
     }
     bindGroup = undefined
+    if (present) present.bindGroup = undefined
   }
 
   async function render(camera: Parameters<Tracer['render']>[0], cols: number, rows: number, time: number, pose?: Parameters<Tracer['render']>[4], timeOfDay = NOON, occlusion = false) {
@@ -228,6 +252,16 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     pass.setBindGroup(0, bindGroup)
     pass.dispatchWorkgroups(Math.ceil(cols / WORKGROUP), Math.ceil(rows / WORKGROUP))
     pass.end()
+    if (present) {
+      drawToCanvas(encoder, present, cols, rows)
+      device.queue.submit([encoder.finish()])
+      await device.queue.onSubmittedWorkDone()
+      if (disposed) return
+      busy = false
+      const none = { ink: new Uint8Array(0), rgb: new Uint8Array(0), depths: new Float32Array(0), normals: new Int8Array(0) }
+      onFrame({ cols, rows, ...none, traceMs: performance.now() - start })
+      return
+    }
     const bytes = count * CELL_WORDS * 4
     encoder.copyBufferToBuffer(output!.buffer, 0, output!.readback, 0, bytes)
     device.queue.submit([encoder.finish()])
@@ -265,6 +299,22 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     onFrame(frame)
   }
 
+  function drawToCanvas(encoder: GPUCommandEncoder, p: NonNullable<typeof present>, cols: number, rows: number) {
+    const sky = scene!.light.sky.map(c => linearToSrgbByte(c) / 255)
+    device!.queue.writeBuffer(p.params, 0, new Float32Array([cols, rows, canvas!.width, canvas!.height, ...sky, 1]))
+    p.bindGroup ??= device!.createBindGroup({
+      layout: p.pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: p.params } }, { binding: 1, resource: { buffer: output!.buffer } }],
+    })
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: p.context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
+    })
+    pass.setPipeline(p.pipeline)
+    pass.setBindGroup(0, p.bindGroup)
+    pass.draw(3)
+    pass.end()
+  }
+
   return {
     label: 'WebGPU compute',
     get busy() {
@@ -281,6 +331,8 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     dispose() {
       disposed = true
       for (const buffer of Object.values(buffers ?? {})) buffer.destroy()
+      present?.params.destroy()
+      present?.context.unconfigure()
       output?.buffer.destroy()
       output?.readback.destroy()
     },

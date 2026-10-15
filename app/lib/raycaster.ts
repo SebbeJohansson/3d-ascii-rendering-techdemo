@@ -25,6 +25,8 @@ export interface RaycastScene {
   /** Which primitives have windows that light up at night. */
   windows: Uint8Array
   ground: Vec3
+  /** How much a sea mirrors looking straight down (Environment.reflectance), 0 for solid ground. */
+  reflectance: number
   /** The current time of day's light; see setLighting(). */
   light: SceneLight
   fogNear: number
@@ -203,6 +205,7 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     colors,
     windows,
     ground: linearRgb(env.ground),
+    reflectance: env.reflectance ?? 0,
     light: undefined!,
     fogNear: env.fogNear,
     fogFar: env.fogFar,
@@ -444,6 +447,18 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
     }
   }
 
+  // The ground covers the whole environment at y = 0; a sea reaches the horizon.
+  if (!anyHit && dy < 0) {
+    const tg = -oy * iy
+    if (tg > 0 && tg < best && (s.reflectance || (Math.abs(ox + dx * tg) <= s.half && Math.abs(oz + dz * tg) <= s.half))) {
+      best = tg
+      hit.prim = GROUND
+      hit.nx = 0
+      hit.ny = 1
+      hit.nz = 0
+    }
+  }
+
   // Clip the ray to the environment's bounding box.
   let t0 = 0
   let t1 = maxT
@@ -462,18 +477,6 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   if (t0 > t1) {
     hit.t = best
     return hit.prim !== MISS
-  }
-
-  // The ground covers the whole environment at y = 0.
-  if (!anyHit && dy < 0) {
-    const tg = -oy * iy
-    if (tg >= t0 && tg <= t1 && tg < best) {
-      best = tg
-      hit.prim = GROUND
-      hit.nx = 0
-      hit.ny = 1
-      hit.nz = 0
-    }
   }
 
   // Meshes: one BVH query. The grid walk below then only accepts primitives closer than this.
@@ -625,6 +628,123 @@ function ambientOcclusion(s: RaycastScene, px: number, py: number, pz: number, n
   return 1 - AO_STRENGTH * (blocked / AO_DIRS.length)
 }
 
+/** What shade() worked out for the last hit: unfogged linear color, ink 0..1 and normal. */
+const shaded = { r: 0, g: 0, b: 0, ink: 0, nx: 0, ny: 0, nz: 0 }
+
+/**
+ * Shades the hit trace() just found for the ray from (ox, oy, oz) along unit (dx, dy, dz),
+ * into `shaded`. Its ink is how shadowed the surface is, before fog.
+ */
+function shade(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number) {
+  const { ground, colors, windows } = s
+  const { sun, sunLight, hemiSky, hemiGround, windowGlow, night, maxLight, minLight } = s.light
+  const { t, prim } = hit
+  let { nx, ny, nz } = hit
+  // Scalars instead of a [r, g, b] array: no allocation per hit.
+  let br: number
+  let bg: number
+  let bb: number
+  // Light the surface gives off itself: lit windows at night.
+  let er = 0
+  let eg = 0
+  let eb = 0
+  if (prim === MESH || prim === PLAYER) {
+    // Blend the triangle's three vertex normals and colors by where the ray hit it,
+    // which makes the faceted mesh look smooth.
+    const { normals: vertexNormals, albedo, bvh } = prim === MESH ? s.mesh! : s.player!
+    const t3 = hit.triangle * 3
+    const i0 = bvh.indices[t3]! * 3
+    const i1 = bvh.indices[t3 + 1]! * 3
+    const i2 = bvh.indices[t3 + 2]! * 3
+    const w1 = hit.u
+    const w2 = hit.v
+    const w0 = 1 - w1 - w2
+    nx = vertexNormals[i0]! * w0 + vertexNormals[i1]! * w1 + vertexNormals[i2]! * w2
+    ny = vertexNormals[i0 + 1]! * w0 + vertexNormals[i1 + 1]! * w1 + vertexNormals[i2 + 1]! * w2
+    nz = vertexNormals[i0 + 2]! * w0 + vertexNormals[i1 + 2]! * w1 + vertexNormals[i2 + 2]! * w2
+    if (prim === PLAYER) {
+      // From the player's space back to the world: turn by its heading.
+      const { cos, sin } = s.player!
+      const wx = nx * cos + nz * sin
+      nz = -nx * sin + nz * cos
+      nx = wx
+    }
+    const nl = Math.hypot(nx, ny, nz) || 1
+    // Seen from behind (e.g. through a gap): shade the side facing the camera.
+    const flip = nx * dx + ny * dy + nz * dz > 0 ? -1 / nl : 1 / nl
+    nx *= flip
+    ny *= flip
+    nz *= flip
+    br = albedo[i0]! * w0 + albedo[i1]! * w1 + albedo[i2]! * w2
+    bg = albedo[i0 + 1]! * w0 + albedo[i1 + 1]! * w1 + albedo[i2 + 1]! * w2
+    bb = albedo[i0 + 2]! * w0 + albedo[i1 + 2]! * w1 + albedo[i2 + 2]! * w2
+  }
+  else if (prim === GROUND) {
+    br = ground[0]
+    bg = ground[1]
+    bb = ground[2]
+  }
+  else {
+    br = colors[prim * 3]!
+    bg = colors[prim * 3 + 1]!
+    bb = colors[prim * 3 + 2]!
+    // Walls only: boxes get exact axis normals, so ny is 0 on every side.
+    if (night && windows[prim] && ny === 0) {
+      const face = nx > 0 ? 0 : nx < 0 ? 1 : nz > 0 ? 2 : 3
+      if (windowLit(face, nx ? oz + dz * t : ox + dx * t, oy + dy * t)) {
+        er = windowGlow[0]
+        eg = windowGlow[1]
+        eb = windowGlow[2]
+      }
+    }
+  }
+
+  // Hemisphere light: blend of ground and sky color by how much the surface points up.
+  const w = ny * 0.5 + 0.5
+  let lr = hemiGround[0] + (hemiSky[0] - hemiGround[0]) * w
+  let lg = hemiGround[1] + (hemiSky[1] - hemiGround[1]) * w
+  let lb = hemiGround[2] + (hemiSky[2] - hemiGround[2]) * w
+
+  // Start secondary rays slightly off the surface so they don't hit the surface itself.
+  const px = ox + dx * t + nx * 0.05
+  const py = oy + dy * t + ny * 0.05
+  const pz = oz + dz * t + nz * 0.05
+
+  // Corners and creases see less of the sky.
+  if (s.occlusion) {
+    const ao = ambientOcclusion(s, px, py, pz, nx, ny, nz)
+    lr *= ao
+    lg *= ao
+    lb *= ao
+  }
+
+  // Sun light, blocked if a shadow ray toward the sun hits anything.
+  const facing = nx * sun[0] + ny * sun[1] + nz * sun[2]
+  if (facing > 0) {
+    if (!trace(s, px, py, pz, sun[0], sun[1], sun[2], true, Infinity)) {
+      lr += sunLight[0] * facing
+      lg += sunLight[1] * facing
+      lb += sunLight[2] * facing
+    }
+  }
+
+  shaded.r = br * lr + er
+  shaded.g = bg * lg + eg
+  shaded.b = bb * lb + eb
+  // A lit window is as bright as it gets: the lightest characters.
+  const shadow = er ? 1 - night : Math.min(1, Math.max(0, (maxLight - luminance(lr, lg, lb)) / (maxLight - minLight)))
+  shaded.ink = MIN_INK + (1 - MIN_INK) * shadow
+  shaded.nx = nx
+  shaded.ny = ny
+  shaded.nz = nz
+}
+
+/** Fog like three's: smoothstep on view depth. */
+function fogAt(s: RaycastScene, depth: number) {
+  const fogT = Math.min(1, Math.max(0, (depth - s.fogNear) / (s.fogFar - s.fogNear)))
+  return fogT * fogT * (3 - 2 * fogT)
+}
+
 /**
  * Traces one ray per cell of a cols × rows grid, rows top to bottom. Writes the shaded color
  * into `rgb` (3 bytes per cell) and into `ink` how shadowed the surface is (0..255). The ink
@@ -644,8 +764,7 @@ export function renderScene(
   const { forward: f, right: r, up: u } = cameraBasis(cam.position, cam.target)
   const tanHalf = Math.tan((cam.fov * Math.PI) / 360)
   const [ox, oy, oz] = cam.position
-  const { ground, colors, windows, fogNear, fogFar } = s
-  const { sun, sunLight, hemiSky, hemiGround, sky, windowGlow, night, maxLight, minLight } = s.light
+  const { sky } = s.light
 
   for (let y = rowStart, row = 0; y < rows; y += rowStep, row++) {
     const sy = (1 - ((y + 0.5) / rows) * 2) * tanHalf
@@ -665,110 +784,44 @@ export function renderScene(
         depths[i] = Infinity
         continue
       }
-
       const { t, prim } = hit
-      let { nx, ny, nz } = hit
-      // Scalars instead of a [r, g, b] array: no allocation per hit.
-      let br: number
-      let bg: number
-      let bb: number
-      // Light the surface gives off itself: lit windows at night.
-      let er = 0
-      let eg = 0
-      let eb = 0
-      if (prim === MESH || prim === PLAYER) {
-        // Blend the triangle's three vertex normals and colors by where the ray hit it,
-        // which makes the faceted mesh look smooth.
-        const { normals: vertexNormals, albedo, bvh } = prim === MESH ? s.mesh! : s.player!
-        const t3 = hit.triangle * 3
-        const i0 = bvh.indices[t3]! * 3
-        const i1 = bvh.indices[t3 + 1]! * 3
-        const i2 = bvh.indices[t3 + 2]! * 3
-        const w1 = hit.u
-        const w2 = hit.v
-        const w0 = 1 - w1 - w2
-        nx = vertexNormals[i0]! * w0 + vertexNormals[i1]! * w1 + vertexNormals[i2]! * w2
-        ny = vertexNormals[i0 + 1]! * w0 + vertexNormals[i1 + 1]! * w1 + vertexNormals[i2 + 1]! * w2
-        nz = vertexNormals[i0 + 2]! * w0 + vertexNormals[i1 + 2]! * w1 + vertexNormals[i2 + 2]! * w2
-        if (prim === PLAYER) {
-          // From the player's space back to the world: turn by its heading.
-          const { cos, sin } = s.player!
-          const wx = nx * cos + nz * sin
-          nz = -nx * sin + nz * cos
-          nx = wx
+      const forward = dx * f[0] + dy * f[1] + dz * f[2]
+      shade(s, ox, oy, oz, dx, dy, dz)
+      let { r: cr, g: cg, b: cb, ink: cellInk } = shaded
+      const { nx, ny, nz } = shaded
+
+      // A sea mirrors what is above it: trace on from the water, upward, and blend in what
+      // that ray sees (or the sky), more of it at grazing angles (Schlick's Fresnel).
+      if (prim === GROUND && s.reflectance) {
+        const k = s.reflectance + (1 - s.reflectance) * (1 + dy) ** 5
+        let mr = sky[0]
+        let mg = sky[1]
+        let mb = sky[2]
+        let mInk = 0
+        const hx = ox + dx * t
+        const hz = oz + dz * t
+        if (trace(s, hx, 0, hz, dx, -dy, dz, false, Infinity)) {
+          // Fogged as far away as it looks: the mirror image lies behind the water.
+          const fog = fogAt(s, (t + hit.t) * forward)
+          shade(s, hx, 0, hz, dx, -dy, dz)
+          mr = shaded.r * (1 - fog) + sky[0] * fog
+          mg = shaded.g * (1 - fog) + sky[1] * fog
+          mb = shaded.b * (1 - fog) + sky[2] * fog
+          mInk = shaded.ink * (1 - fog)
         }
-        const nl = Math.hypot(nx, ny, nz) || 1
-        // Seen from behind (e.g. through a gap): shade the side facing the camera.
-        const flip = nx * dx + ny * dy + nz * dz > 0 ? -1 / nl : 1 / nl
-        nx *= flip
-        ny *= flip
-        nz *= flip
-        br = albedo[i0]! * w0 + albedo[i1]! * w1 + albedo[i2]! * w2
-        bg = albedo[i0 + 1]! * w0 + albedo[i1 + 1]! * w1 + albedo[i2 + 1]! * w2
-        bb = albedo[i0 + 2]! * w0 + albedo[i1 + 2]! * w1 + albedo[i2 + 2]! * w2
-      }
-      else if (prim === GROUND) {
-        br = ground[0]
-        bg = ground[1]
-        bb = ground[2]
-      }
-      else {
-        br = colors[prim * 3]!
-        bg = colors[prim * 3 + 1]!
-        bb = colors[prim * 3 + 2]!
-        // Walls only: boxes get exact axis normals, so ny is 0 on every side.
-        if (night && windows[prim] && ny === 0) {
-          const face = nx > 0 ? 0 : nx < 0 ? 1 : nz > 0 ? 2 : 3
-          if (windowLit(face, nx ? oz + dz * t : ox + dx * t, oy + dy * t)) {
-            er = windowGlow[0]
-            eg = windowGlow[1]
-            eb = windowGlow[2]
-          }
-        }
+        cr += (mr - cr) * k
+        cg += (mg - cg) * k
+        cb += (mb - cb) * k
+        cellInk += (mInk - cellInk) * k
       }
 
-      // Hemisphere light: blend of ground and sky color by how much the surface points up.
-      const w = ny * 0.5 + 0.5
-      let lr = hemiGround[0] + (hemiSky[0] - hemiGround[0]) * w
-      let lg = hemiGround[1] + (hemiSky[1] - hemiGround[1]) * w
-      let lb = hemiGround[2] + (hemiSky[2] - hemiGround[2]) * w
-
-      // Start secondary rays slightly off the surface so they don't hit the surface itself.
-      const px = ox + dx * t + nx * 0.05
-      const py = oy + dy * t + ny * 0.05
-      const pz = oz + dz * t + nz * 0.05
-
-      // Corners and creases see less of the sky.
-      if (s.occlusion) {
-        const ao = ambientOcclusion(s, px, py, pz, nx, ny, nz)
-        lr *= ao
-        lg *= ao
-        lb *= ao
-      }
-
-      // Sun light, blocked if a shadow ray toward the sun hits anything.
-      const facing = nx * sun[0] + ny * sun[1] + nz * sun[2]
-      if (facing > 0) {
-        if (!trace(s, px, py, pz, sun[0], sun[1], sun[2], true, Infinity)) {
-          lr += sunLight[0] * facing
-          lg += sunLight[1] * facing
-          lb += sunLight[2] * facing
-        }
-      }
-
-      // Fog like three's: smoothstep on view depth, blended in linear space.
-      const depth = t * (dx * f[0] + dy * f[1] + dz * f[2])
-      const fogT = Math.min(1, Math.max(0, (depth - fogNear) / (fogFar - fogNear)))
-      const fog = fogT * fogT * (3 - 2 * fogT)
-      const cr = linearToSrgbByte((br * lr + er) * (1 - fog) + sky[0] * fog)
-      const cg = linearToSrgbByte((bg * lg + eg) * (1 - fog) + sky[1] * fog)
-      const cb = linearToSrgbByte((bb * lb + eb) * (1 - fog) + sky[2] * fog)
-      rgb[i * 3] = cr
-      rgb[i * 3 + 1] = cg
-      rgb[i * 3 + 2] = cb
-      // A lit window is as bright as it gets: the lightest characters.
-      const shadow = er ? 1 - night : Math.min(1, Math.max(0, (maxLight - luminance(lr, lg, lb)) / (maxLight - minLight)))
-      ink[i] = (MIN_INK + (1 - MIN_INK) * shadow) * (1 - fog) * 255
+      // Fog blended in linear space.
+      const depth = t * forward
+      const fog = fogAt(s, depth)
+      rgb[i * 3] = linearToSrgbByte(cr * (1 - fog) + sky[0] * fog)
+      rgb[i * 3 + 1] = linearToSrgbByte(cg * (1 - fog) + sky[1] * fog)
+      rgb[i * 3 + 2] = linearToSrgbByte(cb * (1 - fog) + sky[2] * fog)
+      ink[i] = cellInk * (1 - fog) * 255
       depths[i] = depth
       normals[i * 3] = nx * 127
       normals[i * 3 + 1] = ny * 127

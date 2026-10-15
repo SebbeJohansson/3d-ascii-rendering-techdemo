@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu'
-import { abs, color, float, floor, fract, normalWorld, positionWorld, select, step, uniform } from 'three/tsl'
+import { abs, cameraPosition, color, float, floor, fract, normalWorld, positionWorld, pow, reflector, select, step, uniform } from 'three/tsl'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Ref } from 'vue'
 import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
@@ -63,6 +63,27 @@ function createMesh(m: Mesh) {
   return mesh
 }
 
+/**
+ * A calm sea `size` wide, which mirrors the scene above it: its own color is lit as usual and
+ * the mirror image is added on top, more of it at grazing angles (Schlick's Fresnel). The same
+ * blend as the ray tracer's.
+ */
+function createSea(water: number, reflectance: number, size: number) {
+  const mirror = reflector({ resolutionScale: 0.5, bounces: false })
+  // The mirror plane is the target's xy plane: turn it to lie flat, facing up.
+  mirror.target.rotateX(-Math.PI / 2)
+  const view = cameraPosition.sub(positionWorld).normalize()
+  const k = pow(float(1).sub(view.y.max(0)), 5).mul(1 - reflectance).add(reflectance)
+  const material = new THREE.MeshStandardNodeMaterial({ roughness: 1 })
+  material.colorNode = color(water).mul(float(1).sub(k))
+  material.emissiveNode = mirror.rgb.mul(k)
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2), material)
+  sea.add(mirror.target)
+  // Its render target isn't freed with the material.
+  sea.userData.dispose = () => mirror.dispose()
+  return sea
+}
+
 function disposeMesh(mesh: THREE.Mesh) {
   mesh.geometry.dispose()
   ;(mesh.material as THREE.Material).dispose()
@@ -97,6 +118,7 @@ export function createEnvironmentScene() {
       mesh.geometry.dispose()
       ;(mesh.material as THREE.Material).dispose()
       if (mesh instanceof THREE.InstancedMesh) mesh.dispose()
+      mesh.userData.dispose?.()
     }
     content.clear()
   }
@@ -115,7 +137,7 @@ export function createEnvironmentScene() {
     scene.fog = new THREE.Fog(env.sky, env.fogNear, env.fogFar)
     applyLighting()
 
-    const ground = new THREE.Mesh(
+    const ground = env.reflectance ? createSea(env.ground, env.reflectance, extent + env.fogFar * 2) : new THREE.Mesh(
       new THREE.PlaneGeometry(extent, extent).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: env.ground, roughness: 1 }),
     )

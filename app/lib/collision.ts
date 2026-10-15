@@ -22,14 +22,14 @@ function onFootprint(p: Primitive, x: number, z: number, margin: number) {
 
 /**
  * Moves a player at `position` out of every primitive it overlaps, sideways only, and lifts
- * it onto curbs and other low steps. Returns the corrected position, the height of what it
- * stands on, and whether anything blocked it.
+ * it onto curbs and other low steps. `ground` is the height of the land under it. Returns the
+ * corrected position, the height of what it stands on, and whether anything blocked it.
  */
-export function resolveCollisions(primitives: Primitive[], position: Vec3, { radius, height }: Collider, flies: boolean) {
+export function resolveCollisions(primitives: Primitive[], position: Vec3, { radius, height }: Collider, flies: boolean, ground = 0) {
   let [x, y, z] = position
 
   // What it stands on: the highest top under its center that is low enough to step onto.
-  let floor = 0
+  let floor = ground
   for (const p of primitives) {
     const top = p.y + p.height
     if (top > floor && top <= y + STEP && onFootprint(p, x, z, 0)) floor = top

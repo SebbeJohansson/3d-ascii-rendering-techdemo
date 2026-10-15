@@ -28,7 +28,7 @@ struct Params {
   hemiGround: vec4f,  // w: night
   sky: vec4f,         // w: maxLight
   windowGlow: vec4f,  // w: minLight
-  ground: vec4f,
+  ground: vec4f,     // w: reflectance (0 for solid ground)
   player: vec4f,      // xyz: position, w: scale
   playerRot: vec4f,   // x: cos(heading), y: sin(heading)
   dims: vec4u,        // cols, rows, grid cells per side, primitive count
@@ -290,9 +290,20 @@ fn trace(o: vec3f, d: vec3f, anyHit: bool, maxT: f32) -> Hit {
     }
   }
 
-  // Clip the ray to the environment's bounding box.
+  // The ground covers the whole environment at y = 0; a sea reaches the horizon.
   let inv = inverse(d);
   let half = P.right.w;
+  if (!anyHit && d.y < 0.0) {
+    let tg = -o.y * inv.y;
+    let g = o + d * tg;
+    if (tg > 0.0 && tg < best && (P.ground.w > 0.0 || (abs(g.x) <= half && abs(g.z) <= half))) {
+      best = tg;
+      h.prim = GROUND;
+      h.n = vec3f(0.0, 1.0, 0.0);
+    }
+  }
+
+  // Clip the ray to the environment's bounding box.
   var t0 = 0.0;
   var t1 = maxT;
   var a = (-half - o.x) * inv.x;
@@ -310,15 +321,6 @@ fn trace(o: vec3f, d: vec3f, anyHit: bool, maxT: f32) -> Hit {
   if (t0 > t1) {
     h.t = best;
     return h;
-  }
-
-  if (!anyHit && d.y < 0.0) {
-    let tg = -o.y * inv.y;
-    if (tg >= t0 && tg <= t1 && tg < best) {
-      best = tg;
-      h.prim = GROUND;
-      h.n = vec3f(0.0, 1.0, 0.0);
-    }
   }
 
   if (P.mesh.w == 1u) {
@@ -467,27 +469,14 @@ fn toByte(v: f32) -> u32 {
   return u32(i32(trunc(v))) & 255u;
 }
 
-@compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3u) {
-  let cols = P.dims.x;
-  let rows = P.dims.y;
-  if (id.x >= cols || id.y >= rows) { return; }
-  let i = id.y * cols + id.x;
-  let tanHalf = P.camPos.w;
-  let sy = (1.0 - ((f32(id.y) + 0.5) / f32(rows)) * 2.0) * tanHalf;
-  let sx = (((f32(id.x) + 0.5) / f32(cols)) * 2.0 - 1.0) * tanHalf * P.forward.w;
-  let f = P.forward.xyz;
-  let d = normalize(f + P.right.xyz * sx + P.up.xyz * sy);
-  let o = P.camPos.xyz;
+struct Shaded {
+  col: vec3f, // unfogged, linear
+  ink: f32,   // how shadowed, before fog
+  n: vec3f,
+}
 
-  let h = trace(o, d, false, INF);
-  if (h.prim == MISS) {
-    cells[i * 3u] = 0u;
-    cells[i * 3u + 1u] = 0x7f800000u; // +Infinity: sky
-    cells[i * 3u + 2u] = 0u;
-    return;
-  }
-
+// shade() in raycaster.ts: the hit h of the ray from o along d.
+fn shade(o: vec3f, d: vec3f, h: Hit) -> Shaded {
   let t = h.t;
   var n = h.n;
   var albedo: vec3f;
@@ -544,16 +533,74 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     if (trace(sp, sun, true, INF).prim == MISS) { light += P.sunLight.xyz * facing; }
   }
 
-  let depth = t * dot(d, f);
-  let fogT = clamp((depth - P.sunLight.w) / (P.hemiSky.w - P.sunLight.w), 0.0, 1.0);
-  let fog = fogT * fogT * (3.0 - 2.0 * fogT);
-  let col = (albedo * light + emit) * (1.0 - fog) + P.sky.xyz * fog;
   let maxLight = P.sky.w;
   let minLight = P.windowGlow.w;
   var shadow = clamp((maxLight - luminance(light)) / (maxLight - minLight), 0.0, 1.0);
   if (emit.x > 0.0) { shadow = 1.0 - P.hemiGround.w; }
-  let ink = u32(clamp(floor((MIN_INK + (1.0 - MIN_INK) * shadow) * (1.0 - fog) * 255.0), 0.0, 255.0));
-  cells[i * 3u] = srgbByte(col.x) | (srgbByte(col.y) << 8u) | (srgbByte(col.z) << 16u) | (ink << 24u);
+  var res: Shaded;
+  res.col = albedo * light + emit;
+  res.ink = MIN_INK + (1.0 - MIN_INK) * shadow;
+  res.n = n;
+  return res;
+}
+
+fn fogAt(depth: f32) -> f32 {
+  let fogT = clamp((depth - P.sunLight.w) / (P.hemiSky.w - P.sunLight.w), 0.0, 1.0);
+  return fogT * fogT * (3.0 - 2.0 * fogT);
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3u) {
+  let cols = P.dims.x;
+  let rows = P.dims.y;
+  if (id.x >= cols || id.y >= rows) { return; }
+  let i = id.y * cols + id.x;
+  let tanHalf = P.camPos.w;
+  let sy = (1.0 - ((f32(id.y) + 0.5) / f32(rows)) * 2.0) * tanHalf;
+  let sx = (((f32(id.x) + 0.5) / f32(cols)) * 2.0 - 1.0) * tanHalf * P.forward.w;
+  let f = P.forward.xyz;
+  let d = normalize(f + P.right.xyz * sx + P.up.xyz * sy);
+  let o = P.camPos.xyz;
+
+  let h = trace(o, d, false, INF);
+  if (h.prim == MISS) {
+    cells[i * 3u] = 0u;
+    cells[i * 3u + 1u] = 0x7f800000u; // +Infinity: sky
+    cells[i * 3u + 2u] = 0u;
+    return;
+  }
+
+  let t = h.t;
+  let forward = dot(d, f);
+  let sh = shade(o, d, h);
+  var col = sh.col;
+  var ink = sh.ink;
+
+  // A sea mirrors what is above it (Schlick's Fresnel for how much).
+  let reflectance = P.ground.w;
+  if (h.prim == GROUND && reflectance > 0.0) {
+    let k = reflectance + (1.0 - reflectance) * pow(1.0 + d.y, 5.0);
+    let ho = vec3f(o.x + d.x * t, 0.0, o.z + d.z * t);
+    let rd = vec3f(d.x, -d.y, d.z);
+    var mirror = P.sky.xyz;
+    var mirrorInk = 0.0;
+    let rh = trace(ho, rd, false, INF);
+    if (rh.prim != MISS) {
+      let fog = fogAt((t + rh.t) * forward);
+      let m = shade(ho, rd, rh);
+      mirror = m.col * (1.0 - fog) + P.sky.xyz * fog;
+      mirrorInk = m.ink * (1.0 - fog);
+    }
+    col += (mirror - col) * k;
+    ink += (mirrorInk - ink) * k;
+  }
+
+  let depth = t * forward;
+  let fog = fogAt(depth);
+  col = col * (1.0 - fog) + P.sky.xyz * fog;
+  let inkByte = u32(clamp(floor(ink * (1.0 - fog) * 255.0), 0.0, 255.0));
+  let n = sh.n;
+  cells[i * 3u] = srgbByte(col.x) | (srgbByte(col.y) << 8u) | (srgbByte(col.z) << 16u) | (inkByte << 24u);
   cells[i * 3u + 1u] = bitcast<u32>(depth);
   cells[i * 3u + 2u] = toByte(n.x * 127.0) | (toByte(n.y * 127.0) << 8u) | (toByte(n.z * 127.0) << 16u);
 }

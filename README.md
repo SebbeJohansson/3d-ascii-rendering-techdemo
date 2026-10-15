@@ -8,10 +8,11 @@ Live demo: https://sebbejohansson.github.io/3dmodel-rendering-techdemo/
 
 ## What's in it
 
-There are three environments. Each one is generated from a seed, so the same seed always gives the same world.
+There are four environments. Each one is generated from a seed, so the same seed always gives the same world.
 
 - City: a street grid where buildings get taller toward the center.
 - Forest: trees built from cylinders, cones and spheres.
+- Ocean: islands made from a noise heightmap, with beaches, palms and bushes, in a calm sea that mirrors them.
 - Dragon: a model made by blending simple signed distance shapes, then meshed into about 50k triangles. Its wings flap.
 
 You can look at each environment three ways:
@@ -21,11 +22,15 @@ You can look at each environment three ways:
 - `/city/split` shows both next to each other with the cameras synced.
 - `/city/lens` shows the 3D view with the ASCII view on top, but only inside a lens: a circle around the mouse, a bubble around what the camera looks at (it follows the dragon or car when riding), or behind a line sweeping across the view. Both views use the same camera, so the characters sit exactly over what they show.
 
-Swap `city` for `forest` or `dragon` to change scene.
+Swap `city` for `forest`, `ocean` or `dragon` to change scene.
 
 ### Day and night
 
 The **Time** slider in the panel moves the sun across the sky, and **Day and night cycle** runs a full day every two minutes. The sun gets lower and warmer towards the evening, the sky goes orange and then dark blue, and at night a dim moon takes over the shadows while windows in the city light up. The 3D view and the ray tracer compute the same lighting and the same lit windows (see `app/environments/lighting.ts` and `app/lib/windows.ts`).
+
+### The sea
+
+In the ocean the ground is a sea that reaches the horizon and mirrors the islands and the sky. The ray tracer sends a second ray up from the water where a cell's ray hits it; the 3D view renders the scene again from below the water with three's `reflector()`. Both blend the mirror image in the same way: a little looking straight down, almost all of it at grazing angles. Players stand on the islands' land.
 
 ### Riding a dragon or a car
 

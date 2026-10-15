@@ -1,5 +1,5 @@
 /**
- * The ASCII view in a terminal: `yarn ascii [city|forest|dragon] [--seed N] [--size N]`.
+ * The ASCII view in a terminal: `yarn ascii [city|forest|ocean|dragon] [--seed N] [--size N]`.
  * Same ray tracer, environments and players as the browser, drawn with ANSI colors.
  */
 import { appendFileSync, writeFileSync } from 'node:fs'
