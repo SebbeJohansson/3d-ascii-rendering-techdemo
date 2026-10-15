@@ -92,7 +92,12 @@ function coarseGrid() {
 function startTracer() {
   tracer?.dispose()
   const events = {
-    onScene: (summary: string) => emit('stats', `${summary} · ${props.method === 'gpu' ? 'GPU' : 'CPU'} ray tracer · ${tracer!.label}`),
+    onScene: (summary: string) => {
+      // A tracer that wasn't ready yet (the GPU device starts asynchronously) skipped the
+      // frames asked for until now: trace again.
+      dirty = true
+      emit('stats', `${summary} · ${props.method === 'gpu' ? 'GPU' : 'CPU'} ray tracer · ${tracer!.label}`)
+    },
     onFrame,
   }
   tracer = props.method === 'gpu' ? createGpuTracer(events) : props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
