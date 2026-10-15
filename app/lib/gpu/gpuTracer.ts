@@ -5,9 +5,11 @@
  * shader invocation per cell traces it (raytrace.wgsl.ts). The result is read back into the
  * same TracedFrame the CPU tracers produce, so drawing, outlines and the lens are shared.
  *
- * Given a canvas, it skips the readback instead: a second shader (present.wgsl.ts) draws the
- * output buffer onto the canvas, one cell per pixel, and onFrame gets a frame with only its
- * size and timing.
+ * Given a canvas, it can skip the readback instead and draw the output buffer onto the canvas
+ * itself; onFrame then gets a frame with only its size and timing (`presented`):
+ * - 'pixels' mode always does, one cell per pixel (present.wgsl.ts).
+ * - 'glyphs' mode does as characters (glyphs.wgsl.ts) whenever setGlyphs gave it what it
+ *   needs, and reads the frame back otherwise, e.g. for the lens, which the CPU draws.
  */
 import { getEnvironment } from '../../environments'
 import type { EnvironmentScene } from '../../environments/types'
@@ -17,6 +19,7 @@ import { linearToSrgbByte } from '../color'
 import { cameraBasis } from '../math'
 import { buildRaycastScene, type RaycastPlayer, type RaycastScene } from '../raycaster'
 import { createPlayerSlot, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
+import { GLYPH_FLAGS, GLYPH_WORKGROUP, GLYPHS_WGSL } from './glyphs.wgsl'
 import { PRESENT_WGSL } from './present.wgsl'
 import { RAYTRACE_WGSL } from './raytrace.wgsl'
 
@@ -61,11 +64,53 @@ function packBvh(source: { bvh: Bvh, normals: Float32Array, albedo: Float32Array
 
 type PackedBvh = ReturnType<typeof packBvh>
 
-export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTMLCanvasElement): Tracer {
+/** How 'glyphs' mode draws characters: the grid and atlas of glyphRenderer.ts, and the style. */
+export interface GpuGlyphs {
+  /** Cell size in canvas pixels, and the full grid (a coarse frame traces fewer cells). */
+  cellW: number
+  cellH: number
+  cols: number
+  rows: number
+  /** Glyph coverage, one byte per pixel: the glyphs side by side, `cellW` apart. */
+  atlas: Uint8Array
+  atlasWidth: number
+  color: boolean
+  cellBackground: boolean
+  outlines: boolean
+  fogNear: number
+  fogFar: number
+  /** How strongly glyphs stand out from their cell's background, 0..1. */
+  shade: number
+  /** Sky color, 0..255. */
+  sky: readonly number[]
+}
+
+export type GpuTracer = Tracer & {
+  /** 'glyphs' mode: draw the next frames on the GPU like this, or read them back with null. */
+  setGlyphs: (glyphs: GpuGlyphs | null) => void
+}
+
+export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTMLCanvasElement, mode: 'pixels' | 'glyphs' = 'pixels'): GpuTracer {
   let device: GPUDevice | null | undefined
   let pipeline: GPUComputePipeline | undefined
   /** With a canvas: what draws the output buffer onto it. */
   let present: { context: GPUCanvasContext, pipeline: GPURenderPipeline, params: GPUBuffer, bindGroup?: GPUBindGroup } | undefined
+  /** 'glyphs' mode: what styles and draws the cells, with its own buffers. */
+  let glyphPass: {
+    context: GPUCanvasContext
+    style: GPUComputePipeline
+    draw: GPURenderPipeline
+    params: GPUBuffer
+    styled?: GPUBuffer
+    atlas?: GPUTexture
+    /** The atlas array uploaded to `atlas`, to notice a new one. */
+    atlasSource?: Uint8Array
+    styleBindGroup?: GPUBindGroup
+    drawBindGroup?: GPUBindGroup
+    /** Whether the canvas shows a frame, which must go when frames are read back instead. */
+    shown: boolean
+  } | undefined
+  let glyphs: GpuGlyphs | null = null
   let disposed = false
   let busy = false
 
@@ -95,7 +140,25 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       layout: 'auto',
       compute: { module: d.createShaderModule({ code: RAYTRACE_WGSL }), entryPoint: 'main' },
     })
-    if (canvas) {
+    if (canvas && mode === 'glyphs') {
+      const format = navigator.gpu.getPreferredCanvasFormat()
+      const context = canvas.getContext('webgpu')!
+      // Not opaque: cleared to transparent, it shows the CPU-drawn canvas underneath.
+      context.configure({ device: d, format, alphaMode: 'premultiplied' })
+      const module = d.createShaderModule({ code: GLYPHS_WGSL })
+      glyphPass = {
+        context,
+        style: d.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'style' } }),
+        draw: d.createRenderPipeline({
+          layout: 'auto',
+          vertex: { module, entryPoint: 'vs' },
+          fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+        }),
+        params: d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+        shown: false,
+      }
+    }
+    else if (canvas) {
       const format = navigator.gpu.getPreferredCanvasFormat()
       const context = canvas.getContext('webgpu')!
       context.configure({ device: d, format, alphaMode: 'opaque' })
@@ -222,6 +285,11 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     }
     bindGroup = undefined
     if (present) present.bindGroup = undefined
+    if (glyphPass) {
+      glyphPass.styled?.destroy()
+      glyphPass.styled = device!.createBuffer({ size: Math.max(16, count * 8), usage: GPUBufferUsage.STORAGE })
+      glyphPass.styleBindGroup = glyphPass.drawBindGroup = undefined
+    }
   }
 
   async function render(camera: Parameters<Tracer['render']>[0], cols: number, rows: number, time: number, pose?: Parameters<Tracer['render']>[4], timeOfDay = NOON, occlusion = false) {
@@ -253,6 +321,25 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     pass.setBindGroup(0, bindGroup)
     pass.dispatchWorkgroups(Math.ceil(cols / WORKGROUP), Math.ceil(rows / WORKGROUP))
     pass.end()
+    if (glyphPass && glyphs) {
+      drawGlyphs(encoder, glyphPass, glyphs, cols, rows)
+      device.queue.submit([encoder.finish()])
+      const submitted = performance.now()
+      await device.queue.onSubmittedWorkDone()
+      if (disposed) return
+      busy = false
+      const none = { ink: new Uint8Array(0), rgb: new Uint8Array(0), depths: new Float32Array(0), normals: new Int8Array(0) }
+      const end = performance.now()
+      onFrame({ cols, rows, ...none, traceMs: end - start, stages: { prep: submitted - start, gpu: end - submitted }, presented: true })
+      return
+    }
+    if (glyphPass?.shown) {
+      // Frames are read back and drawn by the CPU underneath now: clear the GPU's last one.
+      encoder.beginRenderPass({
+        colorAttachments: [{ view: glyphPass.context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }],
+      }).end()
+      glyphPass.shown = false
+    }
     if (present) {
       drawToCanvas(encoder, present, cols, rows)
       device.queue.submit([encoder.finish()])
@@ -306,6 +393,50 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     onFrame(frame)
   }
 
+  /** Styles the traced cells, then draws them as characters onto the canvas. */
+  function drawGlyphs(encoder: GPUCommandEncoder, p: NonNullable<typeof glyphPass>, g: GpuGlyphs, cols: number, rows: number) {
+    const d = device!
+    if (g.atlas !== p.atlasSource) {
+      p.atlas?.destroy()
+      const height = g.atlas.length / g.atlasWidth
+      p.atlas = d.createTexture({ size: [g.atlasWidth, height], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST })
+      d.queue.writeTexture({ texture: p.atlas }, g.atlas as Uint8Array<ArrayBuffer>, { bytesPerRow: g.atlasWidth }, [g.atlasWidth, height])
+      p.atlasSource = g.atlas
+      p.drawBindGroup = undefined
+    }
+    const flags = (g.color ? GLYPH_FLAGS.color : 0) | (g.cellBackground ? GLYPH_FLAGS.cellBackground : 0) | (g.outlines ? GLYPH_FLAGS.outlines : 0)
+    const data = new ArrayBuffer(64)
+    new Uint32Array(data, 0, 8).set([cols, rows, flags, 0, g.cellW, g.cellH, g.cols, g.rows])
+    new Float32Array(data, 32, 8).set([g.fogNear, g.fogFar, g.shade, 0, g.sky[0]!, g.sky[1]!, g.sky[2]!, 0])
+    d.queue.writeBuffer(p.params, 0, data)
+
+    p.styleBindGroup ??= d.createBindGroup({
+      layout: p.style.getBindGroupLayout(0),
+      entries: [p.params, output!.buffer, p.styled!].map((buffer, binding) => ({ binding, resource: { buffer } })),
+    })
+    p.drawBindGroup ??= d.createBindGroup({
+      layout: p.draw.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: p.params } },
+        { binding: 3, resource: { buffer: p.styled! } },
+        { binding: 4, resource: p.atlas!.createView() },
+      ],
+    })
+    const compute = encoder.beginComputePass()
+    compute.setPipeline(p.style)
+    compute.setBindGroup(0, p.styleBindGroup)
+    compute.dispatchWorkgroups(Math.ceil(cols / GLYPH_WORKGROUP), Math.ceil(rows / GLYPH_WORKGROUP))
+    compute.end()
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: p.context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }],
+    })
+    pass.setPipeline(p.draw)
+    pass.setBindGroup(0, p.drawBindGroup)
+    pass.draw(3)
+    pass.end()
+    p.shown = true
+  }
+
   function drawToCanvas(encoder: GPUCommandEncoder, p: NonNullable<typeof present>, cols: number, rows: number) {
     const sky = scene!.light.sky.map(c => linearToSrgbByte(c) / 255)
     device!.queue.writeBuffer(p.params, 0, new Float32Array([cols, rows, canvas!.width, canvas!.height, ...sky, 1]))
@@ -329,6 +460,9 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     },
     setScene,
     setPlayer: player.set,
+    setGlyphs(next) {
+      glyphs = next
+    },
     render(...args) {
       void render(...args).catch((error) => {
         busy = false
@@ -340,6 +474,10 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       for (const buffer of Object.values(buffers ?? {})) buffer.destroy()
       present?.params.destroy()
       present?.context.unconfigure()
+      glyphPass?.params.destroy()
+      glyphPass?.styled?.destroy()
+      glyphPass?.atlas?.destroy()
+      glyphPass?.context.unconfigure()
       output?.buffer.destroy()
       output?.readback?.destroy()
     },

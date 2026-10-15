@@ -37,7 +37,7 @@ export interface Cells {
 }
 
 /** Outlines further into the fog than this (0 = fully fogged) aren't drawn. */
-const MIN_OUTLINE_STRENGTH = 0.15
+export const MIN_OUTLINE_STRENGTH = 0.15
 
 /**
  * Line color for an outline: well darker than a light surface, well lighter than a dark one,

@@ -289,5 +289,18 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
     ctx.putImageData(frame, 0, 0)
   }
 
-  return { resize, draw }
+  /** The grid in canvas pixels and the glyph atlas, for drawing the same characters elsewhere (the GPU tracer). */
+  function layout() {
+    return { cellW, cellH, cols, rows, atlas: glyphAlpha, atlasWidth, shade }
+  }
+
+  /** Clears whatever this renderer drew, when something else draws the picture on top. */
+  function clear(ctx: CanvasRenderingContext2D) {
+    if (!drawnOn) return
+    ctx.clearRect(0, 0, width, height)
+    gpu?.clear()
+    drawnOn = undefined
+  }
+
+  return { resize, draw, layout, clear }
 }

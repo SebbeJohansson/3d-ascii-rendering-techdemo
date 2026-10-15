@@ -22,10 +22,10 @@ const TOP = 4 // '-'
 const BOTTOM = 5 // '_'
 
 /** A neighbor counts as farther away beyond this ratio of depth (plus a small fixed margin). */
-const DEPTH_RATIO = 1.05
-const DEPTH_MARGIN = 0.5
+export const DEPTH_RATIO = 1.05
+export const DEPTH_MARGIN = 0.5
 /** Surfaces meet at a crease when their normals' dot product is below this (about 60°). */
-const CREASE_DOT = 0.5 * 127 * 127
+export const CREASE_DOT = 0.5 * 127 * 127
 
 /** Writes an outline code per cell into `out`: 0 for none, else 1..5 for OUTLINE_CHARS. */
 export function findOutlines(cols: number, rows: number, depths: Float32Array, normals: Int8Array, out: Uint8Array) {

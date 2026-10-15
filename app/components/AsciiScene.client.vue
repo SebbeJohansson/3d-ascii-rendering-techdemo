@@ -4,10 +4,10 @@
 import type { Environment } from '~/environments'
 import { lightingAt } from '~/environments/lighting'
 import { CAMERA_FOV, orbitView, panView, zoomView, type CameraView } from '~/lib/camera'
-import { hexToCss } from '~/lib/color'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createGlyphRenderer } from '~/lib/glyphRenderer'
-import { createGpuTracer } from '~/lib/gpu/gpuTracer'
+import { hexToBytes, hexToCss } from '~/lib/color'
+import { createGpuTracer, type GpuGlyphs, type GpuTracer } from '~/lib/gpu/gpuTracer'
 import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
@@ -57,6 +57,8 @@ const container = ref<HTMLDivElement>()
 const canvas = ref<HTMLCanvasElement>()
 /** Over `canvas`: the atlas path draws here with WebGL2. Lets pointer events through. */
 const glCanvas = ref<HTMLCanvasElement>()
+/** Over both: the GPU ray tracer draws characters here itself, without reading frames back. */
+const gpuCanvas = ref<HTMLCanvasElement>()
 const { time: timeOfDay } = useTimeOfDay()
 const lighting = computed(() => lightingAt(timeOfDay.value, props.env.sky))
 const skyCss = computed(() => hexToCss(lighting.value.sky))
@@ -68,6 +70,8 @@ const chaseCamera = useChaseCamera()
 let glyphs = createGlyphRenderer()
 const meter = createFrameMeter(perf => emit('perf', perf))
 let tracer: Tracer | undefined
+/** `tracer` when it is the GPU one that can draw characters itself. */
+let gpuGlyphTracer: GpuTracer | undefined
 let ctx: CanvasRenderingContext2D | undefined
 let resizeObserver: ResizeObserver | undefined
 let frameId = 0
@@ -113,9 +117,10 @@ function startTracer() {
     },
     onFrame,
   }
+  gpuGlyphTracer = props.method === 'gpu' && !pixels ? createGpuTracer(events, gpuCanvas.value, 'glyphs') : undefined
   tracer = pixels
     ? createGpuTracer(events, canvas.value)
-    : props.method === 'gpu' ? createGpuTracer(events) : props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
+    : gpuGlyphTracer ?? (props.worker ? createWorkerTracer(events) : createMainThreadTracer(events))
   tracer.setPlayer(playerKind.value, props.seed)
   rebuild()
 }
@@ -133,11 +138,14 @@ function onFrame(frame: TracedFrame) {
       dirty = true
       return
     }
-    // Full resolution frames are already on the canvas, stretched by the GPU.
-    if (!pixels) frame = upscaleFrame(frame, cols, rows)
+    // Frames the GPU drew are already on the canvas, stretched by the GPU.
+    if (!frame.presented) frame = upscaleFrame(frame, cols, rows)
   }
-  if (pixels) {
-    meter.frame(frame.traceMs, { trace: frame.traceMs })
+  if (frame.presented) {
+    // The GPU's canvas sits on top; clear what the CPU drew underneath, for the frames it lets through.
+    if (ctx) glyphs.clear(ctx)
+    last = undefined
+    meter.frame(frame.traceMs, frame.stages ?? { trace: frame.traceMs })
     return
   }
   last = frame
@@ -149,7 +157,12 @@ function onFrame(frame: TracedFrame) {
 }
 
 function draw() {
-  if (!ctx || !last) return
+  // Drawn by the GPU, or nothing traced yet: trace again with the new settings.
+  if (!last) {
+    dirty = true
+    return
+  }
+  if (!ctx) return
   const { env, color, cellBackground, atlas, stretch, outlines, lens } = props
   if (lens && lastCamera) {
     if (mask.length !== cols * rows) mask = new Uint8Array(cols * rows)
@@ -173,6 +186,10 @@ function resize() {
   }
   if (!ctx) return
   ;({ cols, rows, cellWidth, cellHeight } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize))
+  if (gpuCanvas.value) {
+    gpuCanvas.value.width = canvas.value.width
+    gpuCanvas.value.height = canvas.value.height
+  }
   emit('grid', { cols, rows })
   dirty = true
 }
@@ -200,7 +217,18 @@ function tick() {
   tracing = camera()
   tracedCoarse = moving && props.coarseDrag
   const grid = tracedCoarse ? coarseGrid() : { cols, rows }
+  gpuGlyphTracer?.setGlyphs(gpuGlyphs())
   tracer.render(tracing, grid.cols, grid.rows, performance.now() / 1000, player(), timeOfDay.value, props.occlusion)
+}
+
+/**
+ * How the GPU tracer should draw characters itself, or null where the CPU has to: the lens
+ * and stretched contrast need the whole frame, and fillText is the CPU's own way to draw.
+ */
+function gpuGlyphs(): GpuGlyphs | null {
+  const { env, color, cellBackground, atlas, stretch, outlines, lens } = props
+  if (!atlas || stretch || lens) return null
+  return { ...glyphs.layout(), color, cellBackground, outlines, fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(lighting.value.sky) }
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
@@ -298,6 +326,7 @@ onBeforeUnmount(() => {
       @contextmenu.prevent
     />
     <canvas v-if="!pixels" ref="glCanvas" class="glyphs" />
+    <canvas v-if="!pixels" ref="gpuCanvas" class="glyphs" />
   </div>
 </template>
 

@@ -12,7 +12,7 @@ const { method, color, cellBackground, outlines, stretch, occlusion, coarseDrag,
 const gpu = hasWebGpu()
 const METHODS: { id: AsciiMethod, name: string, hint: string }[] = [
   { id: 'cpu', name: 'CPU', hint: 'Ray traced in JavaScript, one ray per character.' },
-  { id: 'gpu', name: 'GPU', hint: 'The same ray tracer as a WebGPU compute shader.' },
+  { id: 'gpu', name: 'GPU', hint: 'The same ray tracer as a WebGPU compute shader, drawn straight from the GPU.' },
   { id: 'shader', name: 'Shader', hint: 'No ray tracing: the 3D view, turned into characters by a post-processing shader.' },
   { id: 'pixels', name: 'Pixels', hint: 'No characters: the GPU ray tracer at full resolution, one ray per pixel, drawn straight from the GPU.' },
 ]

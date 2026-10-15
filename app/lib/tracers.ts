@@ -23,6 +23,8 @@ export interface TracedFrame {
   traceMs: number
   /** Optional breakdown of traceMs by stage, e.g. { gpu, readback }. */
   stages?: Record<string, number>
+  /** Already drawn onto the canvas by the GPU: the cell arrays are empty. */
+  presented?: boolean
 }
 
 export interface TracerEvents {
