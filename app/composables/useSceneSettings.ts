@@ -1,6 +1,9 @@
 import { getEnvironment, type Environment } from '~/environments'
 import { DEFAULT_VIEW, type CameraView } from '~/lib/camera'
 
+/** How the ASCII view is made: ray traced on the CPU or the GPU, or a shader over the 3D view. */
+export type AsciiMethod = 'cpu' | 'gpu' | 'shader'
+
 const STORAGE_PREFIX = 'city-generator:'
 
 /**
@@ -50,6 +53,7 @@ export function useAsciiSettings() {
     outlines: usePersistentState('ascii-outlines', () => true),
     stretch: usePersistentState('ascii-stretch', () => false),
     atlas: usePersistentState('ascii-atlas', () => true),
+    method: usePersistentState<AsciiMethod>('ascii-method', () => 'cpu'),
     worker: usePersistentState('ascii-worker', () => true),
     fontSize: usePersistentState('ascii-font-size', () => 12),
   }

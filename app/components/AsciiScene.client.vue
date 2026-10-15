@@ -6,6 +6,7 @@ import { CAMERA_FOV, orbitView, panView, zoomView, type CameraView } from '~/lib
 import { hexToCss } from '~/lib/color'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createGlyphRenderer } from '~/lib/glyphRenderer'
+import { createGpuTracer } from '~/lib/gpu/gpuTracer'
 import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
@@ -26,6 +27,8 @@ const props = defineProps<{
   outlines: boolean
   /** Ray trace in a pool of Web Workers instead of on the main thread. */
   worker: boolean
+  /** 'gpu' ray traces with WebGPU compute; anything else on the CPU (see `worker`). */
+  method: AsciiMethod
   /** Character height in CSS pixels. Smaller characters mean more cells and more detail. */
   fontSize: number
   /**
@@ -74,10 +77,10 @@ let mask = new Uint8Array(0)
 function startTracer() {
   tracer?.dispose()
   const events = {
-    onScene: (summary: string) => emit('stats', `${summary} · CPU ray tracer · ${tracer!.label}`),
+    onScene: (summary: string) => emit('stats', `${summary} · ${props.method === 'gpu' ? 'GPU' : 'CPU'} ray tracer · ${tracer!.label}`),
     onFrame,
   }
-  tracer = props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
+  tracer = props.method === 'gpu' ? createGpuTracer(events) : props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
   tracer.setPlayer(playerKind.value, props.seed)
   rebuild()
 }
@@ -197,7 +200,7 @@ watch(view, () => (dirty = true))
 watch(timeOfDay, () => (dirty = true))
 // The lens moves without the scene changing: redraw the last frame, no new trace needed.
 watch(() => props.lens, draw, { deep: true })
-watch(() => props.worker, startTracer)
+watch(() => [props.worker, props.method], startTracer)
 watch([playerKind, () => props.seed], () => {
   tracer?.setPlayer(playerKind.value, props.seed)
   dirty = true

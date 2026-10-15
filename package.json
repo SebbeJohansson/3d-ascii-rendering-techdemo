@@ -19,6 +19,7 @@
   "devDependencies": {
     "@types/node": "^24.19.2",
     "@types/three": "^0.186.0",
+    "@webgpu/types": "^0.1.74",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vue-tsc": "^3.3.13"

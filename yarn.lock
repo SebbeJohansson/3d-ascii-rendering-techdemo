@@ -11,6 +11,7 @@ __metadata:
   dependencies:
     "@types/node": "npm:^24.19.2"
     "@types/three": "npm:^0.186.0"
+    "@webgpu/types": "npm:^0.1.74"
     nuxt: "npm:^4.6.1"
     three: "npm:^0.186.1"
     tsx: "npm:^4.23.15"
@@ -1979,6 +1980,13 @@ __metadata:
   version: 3.5.44
   resolution: "@vue/shared@npm:3.5.44"
   checksum: 10c0/d33082cb159b1c8c38fb7e7d9747d9ba1909f80f5883b82dd0000412366048aa369b96acfa332cb32bfeeeee504b7c96f1103eb45b9b4543e95ec360b0047342
+  languageName: node
+  linkType: hard
+
+"@webgpu/types@npm:^0.1.74":
+  version: 0.1.74
+  resolution: "@webgpu/types@npm:0.1.74"
+  checksum: 10c0/590d475d81f8468e207d1cc8230aa6444d5b2d96dff81279e2a864f3b9197b94bf9572043f9726ca7108ad305e3f5c6b3c86e8ee9b2b652bc83e050dc6bf69fe
   languageName: node
   linkType: hard
 
