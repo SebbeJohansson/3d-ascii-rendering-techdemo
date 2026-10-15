@@ -10,7 +10,7 @@ import { createGpuTracer } from '~/lib/gpu/gpuTracer'
 import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
-import { createMainThreadTracer, createWorkerTracer, type TracedFrame, type Tracer } from '~/lib/tracers'
+import { createMainThreadTracer, createWorkerTracer, upscaleFrame, type TracedFrame, type Tracer } from '~/lib/tracers'
 
 const props = defineProps<{
   env: Environment
@@ -27,6 +27,8 @@ const props = defineProps<{
   outlines: boolean
   /** Darken corners and creases with ambient occlusion rays. */
   occlusion: boolean
+  /** Trace a coarser grid while the camera is dragged or zoomed, and sharpen when it stops. */
+  coarseDrag: boolean
   /** Ray trace in a pool of Web Workers instead of on the main thread. */
   worker: boolean
   /** 'gpu' ray traces with WebGPU compute; anything else on the CPU (see `worker`). */
@@ -75,6 +77,17 @@ let lastCamera: Camera | undefined
 let cellWidth = 0
 let cellHeight = 0
 let mask = new Uint8Array(0)
+/** The camera is being moved by hand: drag, or a wheel turned in the last moment. */
+let moving = false
+let wheelTimer: ReturnType<typeof setTimeout> | undefined
+/** Whether the frame in flight, or else the last one, was traced on the coarse grid. */
+let tracedCoarse = false
+
+/** The grid traced while moving: cells of at least ~10 px, and at least twice as big as usual. */
+function coarseGrid() {
+  const factor = Math.max(2, Math.ceil(10 / props.fontSize))
+  return { cols: Math.ceil(cols / factor), rows: Math.ceil(rows / factor) }
+}
 
 function startTracer() {
   tracer?.dispose()
@@ -93,10 +106,14 @@ function rebuild() {
 }
 
 function onFrame(frame: TracedFrame) {
-  // Traced for an old window size: throw it away and trace again.
   if (frame.cols !== cols || frame.rows !== rows) {
-    dirty = true
-    return
+    const coarse = coarseGrid()
+    // Traced for an old window size: throw it away and trace again.
+    if (frame.cols !== coarse.cols || frame.rows !== coarse.rows) {
+      dirty = true
+      return
+    }
+    frame = upscaleFrame(frame, cols, rows)
   }
   last = frame
   lastCamera = tracing
@@ -146,7 +163,9 @@ function tick() {
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
   tracing = camera()
-  tracer.render(tracing, cols, rows, performance.now() / 1000, player(), timeOfDay.value, props.occlusion)
+  tracedCoarse = moving && props.coarseDrag
+  const grid = tracedCoarse ? coarseGrid() : { cols, rows }
+  tracer.render(tracing, grid.cols, grid.rows, performance.now() / 1000, player(), timeOfDay.value, props.occlusion)
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
@@ -161,6 +180,13 @@ function setView(next: CameraView) {
 function onPointerDown(e: PointerEvent) {
   canvas.value!.setPointerCapture(e.pointerId)
   drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }
+  moving = true
+}
+
+/** The camera came to rest: trace again at full resolution if the last frame was coarse. */
+function stopMoving() {
+  moving = false
+  if (tracedCoarse) dirty = true
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -175,10 +201,15 @@ function onPointerMove(e: PointerEvent) {
 
 function onPointerUp() {
   drag = undefined
+  stopMoving()
 }
 
 function onWheel(e: WheelEvent) {
   e.preventDefault()
+  // A wheel has no "up" event: count it as moving until it has been still for a moment.
+  moving = true
+  clearTimeout(wheelTimer)
+  wheelTimer = setTimeout(() => !drag && stopMoving(), 150)
   if (playerPose.value) chaseCamera.zoom(e.deltaY)
   else setView(zoomView(view.value, e.deltaY))
 }
@@ -211,6 +242,7 @@ watch([playerKind, () => props.seed], () => {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(frameId)
+  clearTimeout(wheelTimer)
   resizeObserver?.disconnect()
   tracer?.dispose()
 })

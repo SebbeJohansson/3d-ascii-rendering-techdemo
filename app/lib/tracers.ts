@@ -89,6 +89,26 @@ function emptyFrame(cols: number, rows: number): TracedFrame {
   return { cols, rows, ink: new Uint8Array(n), rgb: new Uint8Array(n * 3), depths: new Float32Array(n), normals: new Int8Array(n * 3), traceMs: 0 }
 }
 
+/** Stretches a frame traced on a coarser grid over cols × rows cells, each cell copying its nearest. */
+export function upscaleFrame(frame: TracedFrame, cols: number, rows: number): TracedFrame {
+  const out = emptyFrame(cols, rows)
+  out.traceMs = frame.traceMs
+  for (let y = 0; y < rows; y++) {
+    const from = Math.floor((y * frame.rows) / rows) * frame.cols
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x
+      const j = from + Math.floor((x * frame.cols) / cols)
+      out.ink[i] = frame.ink[j]!
+      out.depths[i] = frame.depths[j]!
+      for (let c = 0; c < 3; c++) {
+        out.rgb[i * 3 + c] = frame.rgb[j * 3 + c]!
+        out.normals[i * 3 + c] = frame.normals[j * 3 + c]!
+      }
+    }
+  }
+  return out
+}
+
 export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Tracer {
   let scene: RaycastScene | undefined
   let generated: EnvironmentScene | undefined

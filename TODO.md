@@ -5,7 +5,7 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 ## ASCII rendering
 
 - [x] **Ambient occlusion.** A few extra short rays per cell darken corners and creases, so the dragon and the street canyons get depth. Costs speed, so make it a toggle. ~1 h
-- [ ] **Lower resolution while dragging.** Trace at a coarser grid while the camera moves and sharpen when it stops, so 3 px characters stay smooth on any machine. ~30 min
+- [x] **Lower resolution while dragging.** Trace at a coarser grid while the camera moves and sharpen when it stops, so 3 px characters stay smooth on any machine. ~30 min
 
 ## World and lighting
 

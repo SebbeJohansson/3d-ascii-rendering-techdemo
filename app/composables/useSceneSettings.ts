@@ -53,6 +53,7 @@ export function useAsciiSettings() {
     outlines: usePersistentState('ascii-outlines', () => true),
     stretch: usePersistentState('ascii-stretch', () => false),
     occlusion: usePersistentState('ascii-occlusion', () => false),
+    coarseDrag: usePersistentState('ascii-coarse-drag', () => true),
     atlas: usePersistentState('ascii-atlas', () => true),
     method: usePersistentState<AsciiMethod>('ascii-method', () => 'cpu'),
     worker: usePersistentState('ascii-worker', () => true),

@@ -8,7 +8,7 @@ const props = defineProps<{
   lens?: boolean
 }>()
 
-const { method, color, cellBackground, outlines, stretch, occlusion, atlas, worker, fontSize } = useAsciiSettings()
+const { method, color, cellBackground, outlines, stretch, occlusion, coarseDrag, atlas, worker, fontSize } = useAsciiSettings()
 const gpu = hasWebGpu()
 const METHODS: { id: AsciiMethod, name: string, hint: string }[] = [
   { id: 'cpu', name: 'CPU', hint: 'Ray traced in JavaScript, one ray per character.' },
@@ -66,6 +66,10 @@ const traced = computed(() => effective.value !== 'shader')
   <label v-if="traced" class="toggle">
     <input v-model="occlusion" type="checkbox">
     Ambient occlusion (darker corners, slower)
+  </label>
+  <label v-if="traced" class="toggle">
+    <input v-model="coarseDrag" type="checkbox">
+    Lower resolution while dragging
   </label>
   <label v-if="traced" class="toggle">
     <input v-model="atlas" type="checkbox">
