@@ -786,6 +786,20 @@ export function renderScene(
       }
       const { t, prim } = hit
       const forward = dx * f[0] + dy * f[1] + dz * f[2]
+      const depth = t * forward
+      const fog = fogAt(s, depth)
+      // Ground lost in the fog (the far sea) is plain sky: no shading, no reflection.
+      if (fog >= 1 && prim === GROUND) {
+        rgb[i * 3] = linearToSrgbByte(sky[0])
+        rgb[i * 3 + 1] = linearToSrgbByte(sky[1])
+        rgb[i * 3 + 2] = linearToSrgbByte(sky[2])
+        ink[i] = 0
+        depths[i] = depth
+        normals[i * 3] = 0
+        normals[i * 3 + 1] = 127
+        normals[i * 3 + 2] = 0
+        continue
+      }
       shade(s, ox, oy, oz, dx, dy, dz)
       let { r: cr, g: cg, b: cb, ink: cellInk } = shaded
       const { nx, ny, nz } = shaded
@@ -800,7 +814,9 @@ export function renderScene(
         let mInk = 0
         const hx = ox + dx * t
         const hz = oz + dz * t
-        if (trace(s, hx, 0, hz, dx, -dy, dz, false, Infinity)) {
+        // Anything farther than the fog's far end mirrors as plain sky: look no further.
+        const reach = s.fogFar / forward - t
+        if (reach > 0 && trace(s, hx, 0, hz, dx, -dy, dz, false, reach)) {
           // Fogged as far away as it looks: the mirror image lies behind the water.
           const fog = fogAt(s, (t + hit.t) * forward)
           shade(s, hx, 0, hz, dx, -dy, dz)
@@ -816,8 +832,6 @@ export function renderScene(
       }
 
       // Fog blended in linear space.
-      const depth = t * forward
-      const fog = fogAt(s, depth)
       rgb[i * 3] = linearToSrgbByte(cr * (1 - fog) + sky[0] * fog)
       rgb[i * 3 + 1] = linearToSrgbByte(cg * (1 - fog) + sky[1] * fog)
       rgb[i * 3 + 2] = linearToSrgbByte(cb * (1 - fog) + sky[2] * fog)

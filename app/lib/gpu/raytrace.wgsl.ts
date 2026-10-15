@@ -572,6 +572,15 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let t = h.t;
   let forward = dot(d, f);
+  let depth = t * forward;
+  let fog = fogAt(depth);
+  // Ground lost in the fog (the far sea) is plain sky: no shading, no reflection.
+  if (fog >= 1.0 && h.prim == GROUND) {
+    cells[i * 3u] = srgbByte(P.sky.x) | (srgbByte(P.sky.y) << 8u) | (srgbByte(P.sky.z) << 16u);
+    cells[i * 3u + 1u] = bitcast<u32>(depth);
+    cells[i * 3u + 2u] = 127u << 8u;
+    return;
+  }
   let sh = shade(o, d, h);
   var col = sh.col;
   var ink = sh.ink;
@@ -584,7 +593,11 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let rd = vec3f(d.x, -d.y, d.z);
     var mirror = P.sky.xyz;
     var mirrorInk = 0.0;
-    let rh = trace(ho, rd, false, INF);
+    // Anything farther than the fog's far end mirrors as plain sky: look no further.
+    let reach = P.hemiSky.w / forward - t;
+    var rh: Hit;
+    rh.prim = MISS;
+    if (reach > 0.0) { rh = trace(ho, rd, false, reach); }
     if (rh.prim != MISS) {
       let fog = fogAt((t + rh.t) * forward);
       let m = shade(ho, rd, rh);
@@ -595,8 +608,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     ink += (mirrorInk - ink) * k;
   }
 
-  let depth = t * forward;
-  let fog = fogAt(depth);
   col = col * (1.0 - fog) + P.sky.xyz * fog;
   let inkByte = u32(clamp(floor(ink * (1.0 - fog) * 255.0), 0.0, 255.0));
   let n = sh.n;
