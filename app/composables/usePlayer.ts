@@ -57,6 +57,8 @@ export function useChaseCamera() {
 /** Dragon climb and dive speed, world units per second. */
 const CLIMB_SPEED = 30
 const MAX_ALTITUDE = 300
+/** How far above the tallest building or tree a dragon starts. */
+const TAKEOFF_CLEARANCE = 15
 /** How fast the chase camera swings round behind a turning player. Higher is snappier. */
 const CAMERA_FOLLOW = 4
 
@@ -93,23 +95,40 @@ export function usePlayerDriver(env: Environment) {
   let world: EnvironmentScene | undefined
   watch([seed, size], () => (world = undefined))
 
-  function spawn() {
+  function obstacles() {
+    return (world ??= env.generate(seed.value, size.value)).primitives
+  }
+
+  /** Where a flyer starts: clear above everything in the environment. */
+  function takeoffHeight() {
+    return obstacles().reduce((top, p) => Math.max(top, p.y + p.height), 0) + TAKEOFF_CLEARANCE
+  }
+
+  function spawn(player: Player) {
     const { position: p, target: t } = view.value
     const [x, , z] = env.spawn?.(size.value, view.value) ?? t
     // Face away from the camera, so it starts out behind the player.
     const heading = Math.atan2(-(t[2] - p[2]), t[0] - p[0])
-    pose.value = { position: [x, 0, z], heading }
+    pose.value = { position: [x, player.flies ? takeoffHeight() : 0, z], heading }
     cameraHeading = heading
     speed = 0
   }
 
   watch(kind, (k, previous) => {
     held.clear()
-    if (k) chaseCamera.reset(getPlayer(k))
-    if (!k) pose.value = undefined
-    else if (!pose.value) spawn()
-    // Swapping dragon for car mid-flight: land where the dragon was.
-    else if (previous && !getPlayer(k).flies) pose.value = { ...pose.value, position: [pose.value.position[0], 0, pose.value.position[2]] }
+    if (!k) {
+      pose.value = undefined
+      return
+    }
+    const player = getPlayer(k)
+    chaseCamera.reset(player)
+    if (!pose.value) spawn(player)
+    // Swapping car for dragon: take off from where the car was. The other way round, the
+    // car drops to the ground under the dragon.
+    else if (previous) {
+      const [x, y, z] = pose.value.position
+      pose.value = { ...pose.value, position: [x, player.flies ? Math.max(y, takeoffHeight()) : 0, z] }
+    }
   }, { immediate: true })
 
   const pressed = (names: string[]) => names.some(n => held.has(n))
@@ -139,12 +158,11 @@ export function usePlayerDriver(env: Environment) {
     }
 
     // Keep out of buildings, trees and rocks, and on the environment's ground.
-    world ??= env.generate(seed.value, size.value)
-    const collided = resolveCollisions(world.primitives, [x, y, z], player.collider, player.flies)
+    const collided = resolveCollisions(obstacles(), [x, y, z], player.collider, player.flies)
     ;[x, y, z] = collided.position
     // Scraping along a wall bleeds off speed.
     if (collided.hit) speed *= Math.exp(-4 * dt)
-    const edge = world.extent / 2 - player.collider.radius
+    const edge = world!.extent / 2 - player.collider.radius
     x = Math.min(edge, Math.max(-edge, x))
     z = Math.min(edge, Math.max(-edge, z))
     pose.value = { position: [x, y, z], heading }

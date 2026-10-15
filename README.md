@@ -24,7 +24,7 @@ Swap `city` for `forest` or `dragon` to change scene.
 
 ### Riding a dragon or a car
 
-The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
+The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
 
 ## How the ASCII renderer works
 
