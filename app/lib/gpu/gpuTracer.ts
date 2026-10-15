@@ -267,11 +267,15 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     const readback = output!.readback!
     encoder.copyBufferToBuffer(output!.buffer, 0, readback, 0, bytes)
     device.queue.submit([encoder.finish()])
+    const submitted = performance.now()
 
+    await device.queue.onSubmittedWorkDone()
+    const traced = performance.now()
     await readback.mapAsync(GPUMapMode.READ, 0, bytes)
     if (disposed) return
     const words = new Uint32Array(readback.getMappedRange(0, bytes).slice(0))
     readback.unmap()
+    const mapped = performance.now()
 
     const frame: TracedFrame = {
       cols,
@@ -295,7 +299,9 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       frame.normals[i * 3 + 1] = (n << 16) >> 24
       frame.normals[i * 3 + 2] = (n << 8) >> 24
     }
-    frame.traceMs = performance.now() - start
+    const end = performance.now()
+    frame.traceMs = end - start
+    frame.stages = { prep: submitted - start, gpu: traced - submitted, map: mapped - traced, unpack: end - mapped }
     busy = false
     onFrame(frame)
   }

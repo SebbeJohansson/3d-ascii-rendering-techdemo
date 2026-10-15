@@ -21,6 +21,8 @@ export interface TracedFrame {
   normals: Int8Array
   /** Wall-clock time from request to result, including any worker messaging. */
   traceMs: number
+  /** Optional breakdown of traceMs by stage, e.g. { gpu, readback }. */
+  stages?: Record<string, number>
 }
 
 export interface TracerEvents {

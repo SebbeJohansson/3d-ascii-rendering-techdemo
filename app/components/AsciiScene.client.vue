@@ -143,7 +143,7 @@ function onFrame(frame: TracedFrame) {
   const start = performance.now()
   draw()
   const drawMs = performance.now() - start
-  meter.frame(frame.traceMs + drawMs, { trace: frame.traceMs, draw: drawMs })
+  meter.frame(frame.traceMs + drawMs, { ...(frame.stages ?? { trace: frame.traceMs }), draw: drawMs })
 }
 
 function draw() {
