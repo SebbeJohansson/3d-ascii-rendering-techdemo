@@ -1,7 +1,8 @@
 /**
  * Draws traced frames into the terminal with ANSI escape codes: one character per cell, in
- * 24-bit color (or the 256-color palette where that isn't supported). Only cells that changed
- * since the last frame are rewritten, which keeps the output small enough for 30+ fps.
+ * 24-bit color (or the 256-color palette where that isn't supported), between a status bar on
+ * top and a key bar at the bottom. Only cells that changed since the last frame are
+ * rewritten, which keeps the output small enough for 30+ fps.
  */
 import { cellColors, GLYPHS, pickGlyphs, type Cells, type StyleOptions } from '../app/lib/cellStyle'
 
@@ -28,7 +29,7 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
   let glyphs = new Uint8Array(0)
   let edges = new Uint8Array(0)
   let edgeStrength = new Float32Array(0)
-  let shownStatus = ''
+  let shownBars = ['', '']
   const colors = new Uint8Array(6)
 
   const color = (layer: 38 | 48, rgb: number) => {
@@ -38,17 +39,21 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
     return trueColor ? `${ESC}${layer};2;${r};${g};${b}m` : `${ESC}${layer};5;${cube(r, g, b)}m`
   }
 
-  /** Sizes the grid to `cols` × `rows` cells and forgets what was on screen. */
-  function resize(c: number, r: number) {
-    cols = c
-    rows = r
+  /**
+   * Sizes the frame for a terminal of `columns` × `lines` (the bars take a line each) and
+   * forgets what was on screen. Returns the grid to trace.
+   */
+  function resize(columns: number, lines: number) {
+    cols = columns
+    rows = Math.max(1, lines - 2)
     shownFg = new Uint32Array(cols * rows).fill(UNKNOWN)
     shownBg = new Uint32Array(cols * rows).fill(UNKNOWN)
     glyphs = new Uint8Array(cols * rows)
     edges = new Uint8Array(cols * rows)
     edgeStrength = new Float32Array(cols * rows)
-    shownStatus = ''
+    shownBars = ['', '']
     out.write(`${ESC}0m${ESC}2J`)
+    return { cols, rows }
   }
 
   /** Draws a frame of `cols` × `rows` cells. */
@@ -76,7 +81,8 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         }
         shownFg[i] = packed
         shownBg[i] = cellBg
-        if (!inPlace) parts.push(`${ESC}${y + 1};${x + 1}H`)
+        // +2: terminal rows count from 1, and the status bar takes the first.
+        if (!inPlace) parts.push(`${ESC}${y + 2};${x + 1}H`)
         inPlace = true
         if (cellBg !== bg) {
           parts.push(color(48, cellBg))
@@ -92,14 +98,18 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
     if (parts.length) out.write(parts.join(''))
   }
 
-  /** Writes the status line under the frame, in the terminal's own colors, if it changed. */
-  function status(text: string) {
+  /** Writes the status bar above the frame and the key bar below it, where they changed. */
+  function bars(top: string, bottom: string) {
     // One short of the full width: writing the bottom-right corner makes some terminals scroll.
     const width = cols - 1
-    const line = text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width)
-    if (line === shownStatus) return
-    out.write(`${ESC}${rows + 1};1H${ESC}0m${ESC}7m${line}${ESC}0m`)
-    shownStatus = line
+    const fit = (text: string) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
+    const lines = [fit(top), fit(bottom)]
+    const at = [1, rows + 2]
+    lines.forEach((line, k) => {
+      if (line === shownBars[k]) return
+      out.write(`${ESC}${at[k]};1H${ESC}0m${ESC}7m${line}${ESC}0m`)
+      shownBars[k] = line
+    })
   }
 
   /** Switches to a separate screen, like full-screen programs (vim, less) do. */
@@ -112,5 +122,5 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
     out.write(`${ESC}0m${ESC}?25h${ESC}?1049l`)
   }
 
-  return { resize, draw, status, enter, leave }
+  return { resize, draw, bars, enter, leave }
 }

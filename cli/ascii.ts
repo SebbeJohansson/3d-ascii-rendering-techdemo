@@ -83,13 +83,16 @@ let pose: PlayerPose | undefined
 const motion: PlayerMotion = { speed: 0, cameraHeading: 0 }
 let chase = defaultChase()
 
+/** Terminal cells the frame covers, between the status bar and the key bar. */
 let cols = 0
 let rows = 0
+/** The grid the tracer fills. */
+let grid = { cols: 0, rows: 0 }
 let dirty = true
 let perf: FramePerf | undefined
 const meter = createFrameMeter((p) => {
   perf = p
-  screen.status(status())
+  showBars()
 })
 const screen = createScreen(process.stdout, process.stdout.hasColors(2 ** 24))
 
@@ -103,33 +106,44 @@ const tracer = createNodeTracer({
 
 function onFrame(frame: TracedFrame) {
   // Traced for an old terminal size: throw it away and trace again.
-  if (frame.cols !== cols || frame.rows !== rows) {
+  if (frame.cols !== grid.cols || frame.rows !== grid.rows) {
     dirty = true
     return
   }
-  screen.status(status())
+  showBars()
   const start = performance.now()
   screen.draw(frame, style)
   const drawMs = performance.now() - start
   meter.frame(frame.traceMs + drawMs, { trace: frame.traceMs, draw: drawMs })
 }
 
-function status() {
-  const fps = perf ? (perf.fps >= 1 ? `${Math.round(perf.fps)} fps ${perf.ms.toFixed(1)} ms` : 'idle') : ''
-  const riding = playerKind ? getPlayer(playerKind).name.toLowerCase() : 'orbit'
-  const keys = playerKind
-    ? `WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
-    : 'WASD/arrows look · Q/E zoom'
-  const releases = input.releases ? 'key releases on' : 'key repeat'
-  return ` ${env.id} · seed ${seed} · ${summary} · ${cols}×${rows} · ${workerCount} threads · ${fps} · ${releases} │ ${riding}: ${keys} · 1 orbit 2 dragon 3 car · Tab scene · N new · Esc quit`
+/** What's on screen and how fast, for the bar on top. */
+function statusBar(loading?: string) {
+  const fps = perf ? (perf.fps >= 1 ? `${Math.round(perf.fps)} fps · ${perf.ms.toFixed(1)} ms` : 'idle') : ''
+  const releases = input.releases ? 'key releases' : 'key repeat'
+  const what = loading ? `loading ${loading}…` : summary
+  return ` ${env.name} · ${what} · seed ${seed} · ${grid.cols}×${grid.rows} · ${workerCount} threads · ${fps} · ${releases}`
 }
 
-function resize() {
+/** The keys that do something right now, for the bar at the bottom. */
+function keyBar() {
+  const moves = !playerKind
+    ? 'orbit: WASD look · Q/E zoom'
+    : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · N new · Esc quit`
+}
+
+function showBars(loading?: string) {
+  screen.bars(statusBar(loading), keyBar())
+}
+
+/** Fits the frame to the terminal, and redraws everything. */
+function layout() {
+  grid = screen.resize(process.stdout.columns, process.stdout.rows)
   cols = process.stdout.columns
-  // The last row is the status line.
-  rows = Math.max(1, process.stdout.rows - 1)
-  screen.resize(cols, rows)
+  rows = Math.max(1, process.stdout.rows - 2)
   dirty = true
+  showBars()
 }
 
 function spawn(kind: PlayerKind | null) {
@@ -175,9 +189,9 @@ function cycleEnvironment(step: number) {
   Object.assign(style, { fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(env.sky) })
   view = structuredClone(env.camera ?? DEFAULT_VIEW)
   // A new sky color: every cell gets rewritten.
-  screen.resize(cols, rows)
+  layout()
   // Building can take a moment (the dragon is meshed from scratch), so say so first.
-  screen.status(` Loading ${env.name.toLowerCase()}…`)
+  showBars(env.name.toLowerCase())
   setImmediate(rebuild)
 }
 
@@ -205,7 +219,8 @@ const input = createInput(process.stdin, process.stdout, {
     else return
     dirty = true
     // Restyling needs every cell rewritten.
-    if (name === 'o' || name === 'b') screen.resize(cols, rows)
+    if (name === 'o' || name === 'b') layout()
+    else showBars()
   },
   onMouse,
 })
@@ -273,7 +288,7 @@ function tick() {
   // One frame in flight at a time; a write still draining to the terminal also waits.
   if (dirty && cols && !tracer.busy && process.stdout.writableNeedDrain === false) {
     dirty = false
-    tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, cols, rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading })
+    tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading })
   }
   timer = setTimeout(tick, TICK_MS)
 }
@@ -298,11 +313,11 @@ process.on('uncaughtException', (error) => {
   console.error(error)
   process.exit(1)
 })
-process.stdout.on('resize', resize)
+process.stdout.on('resize', layout)
 
 screen.enter()
 input.start()
-resize()
+layout()
 tracer.setScene(env.id, seed, size)
 if (values.player === 'dragon' || values.player === 'car') spawn(values.player)
 tick()
