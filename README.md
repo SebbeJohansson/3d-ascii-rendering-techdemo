@@ -26,6 +26,20 @@ Swap `city` for `forest` or `dragon` to change scene.
 
 The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom; once it moves and the mouse is left alone for 1.5 seconds, the camera eases back behind it. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
 
+### In a terminal
+
+The ASCII view also runs in a terminal, with the same ray tracer on Node worker threads:
+
+```bash
+yarn ascii              # the city
+yarn ascii forest --seed 42
+yarn ascii --help       # every option
+```
+
+`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `N` makes a new world and `Esc` quits. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+
+Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor.
+
 ## How the ASCII renderer works
 
 It runs on the CPU without a 3D engine. The code is in `app/lib/`:

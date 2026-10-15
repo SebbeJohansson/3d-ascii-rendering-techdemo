@@ -116,27 +116,38 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
 /** Leave one core for the page itself. Past ~8 workers the gains flatten out. */
 export const DEFAULT_WORKER_COUNT = Math.max(1, Math.min(8, (navigator.hardwareConcurrency || 4) - 1))
 
+/** The part of a Web Worker the tracer uses, so Node's worker threads can stand in for it. */
+export interface TraceWorker {
+  postMessage: (message: WorkerRequest, transfer: Transferable[]) => void
+  onmessage: ((e: MessageEvent<WorkerResponse>) => void) | null
+  terminate: () => void
+}
+
+function spawnBrowserWorker(): TraceWorker {
+  return new Worker(new URL('../workers/raytrace.worker.ts', import.meta.url), { type: 'module' })
+}
+
 /**
  * Each worker holds its own copy of the scene and traces an interleaved share of the rows:
  * worker k does rows k, k + n, k + 2n, ... That gives every worker an even mix of cheap sky
  * rows and expensive scenery rows.
  */
-export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = DEFAULT_WORKER_COUNT): Tracer {
+export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = DEFAULT_WORKER_COUNT, spawn = spawnBrowserWorker): Tracer {
   let pending = 0
   let frameStart = 0
   let frame: TracedFrame | undefined
 
   const workers = Array.from({ length: count }, () => {
-    const worker = new Worker(new URL('../workers/raytrace.worker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (e: MessageEvent<WorkerResponse>) => onMessage(worker, e.data)
+    const worker = spawn()
+    worker.onmessage = e => onMessage(worker, e.data)
     return worker
   })
 
-  function post(worker: Worker, message: WorkerRequest, transfer: Transferable[] = []) {
+  function post(worker: TraceWorker, message: WorkerRequest, transfer: Transferable[] = []) {
     worker.postMessage(message, transfer)
   }
 
-  function onMessage(worker: Worker, msg: WorkerResponse) {
+  function onMessage(worker: TraceWorker, msg: WorkerResponse) {
     if (msg.type === 'scene') {
       // Every worker replies; they all built the same scene, so report it once.
       if (worker === workers[0]) onScene(msg.summary)

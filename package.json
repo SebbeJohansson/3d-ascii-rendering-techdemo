@@ -8,7 +8,8 @@
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck && tsc -p cli",
+    "ascii": "tsx cli/ascii.ts",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
@@ -16,7 +17,9 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "@types/three": "^0.186.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vue-tsc": "^3.3.13"
   }
