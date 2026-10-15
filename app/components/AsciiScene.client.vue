@@ -25,6 +25,8 @@ const props = defineProps<{
   stretch: boolean
   /** Draw edges and silhouettes as line characters. */
   outlines: boolean
+  /** Darken corners and creases with ambient occlusion rays. */
+  occlusion: boolean
   /** Ray trace in a pool of Web Workers instead of on the main thread. */
   worker: boolean
   /** 'gpu' ray traces with WebGPU compute; anything else on the CPU (see `worker`). */
@@ -144,7 +146,7 @@ function tick() {
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
   tracing = camera()
-  tracer.render(tracing, cols, rows, performance.now() / 1000, player(), timeOfDay.value)
+  tracer.render(tracing, cols, rows, performance.now() / 1000, player(), timeOfDay.value, props.occlusion)
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
@@ -194,6 +196,7 @@ onMounted(async () => {
 
 watch(() => [props.env, props.seed, props.size], rebuild)
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
+watch(() => props.occlusion, () => (dirty = true))
 watch(() => props.fontSize, resize)
 // The camera can also be moved from elsewhere (the 3D half of the split view).
 watch(view, () => (dirty = true))

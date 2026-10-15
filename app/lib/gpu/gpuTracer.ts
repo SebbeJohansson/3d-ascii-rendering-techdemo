@@ -182,7 +182,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     pu.set(mesh ? [mesh.offsets.order, mesh.offsets.indices, 0, 0] : [0, 0, 0, 0], 15 * 4)
     pu.set(p && playerPacked ? [playerPacked.offsets.positions, playerPacked.offsets.normals, playerPacked.offsets.albedo, 1] : [0, 0, 0, 0], 16 * 4)
     pu.set(p && playerPacked ? [playerPacked.offsets.order, playerPacked.offsets.indices, 0, 0] : [0, 0, 0, 0], 17 * 4)
-    pu.set([s.cellStart.length, 0, 0, 0], 18 * 4)
+    pu.set([s.cellStart.length, s.occlusion ? 1 : 0, 0, 0], 18 * 4)
     device!.queue.writeBuffer(buffers!.params, 0, params)
   }
 
@@ -199,7 +199,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     bindGroup = undefined
   }
 
-  async function render(camera: Parameters<Tracer['render']>[0], cols: number, rows: number, time: number, pose?: Parameters<Tracer['render']>[4], timeOfDay = NOON) {
+  async function render(camera: Parameters<Tracer['render']>[0], cols: number, rows: number, time: number, pose?: Parameters<Tracer['render']>[4], timeOfDay = NOON, occlusion = false) {
     if (busy || !device || !pipeline || !scene || !generated || !buffers) return
     busy = true
     const start = performance.now()
@@ -211,6 +211,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents): Tracer {
     if (env.animate && scene.mesh && mesh) writeMoved(buffers.meshF, scene.mesh.bvh, scene.mesh.normals, mesh)
     player.attach(scene, pose, time)
     syncPlayer(scene.player)
+    scene.occlusion = occlusion
 
     const count = cols * rows
     ensureOutput(count)

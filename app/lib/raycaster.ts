@@ -51,6 +51,8 @@ export interface RaycastScene {
   }
   /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
   player?: RaycastPlayer
+  /** Darken corners and creases with ambient occlusion rays. Set by the caller per frame. */
+  occlusion: boolean
 }
 
 /** A Lighting, worked out into the terms the shading loop uses. */
@@ -214,6 +216,7 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     stamp: new Uint32Array(count),
     rayId: 0,
     mesh,
+    occlusion: false,
   }
   setLighting(scene, lightingAt(NOON, env.sky))
   return scene
@@ -405,15 +408,16 @@ function hitSphere(b: Float32Array, o: number, ox: number, oy: number, oz: numbe
 }
 
 /**
- * Finds the nearest primitive or ground hit along a ray. With anyHit set it returns as soon as
- * anything blocks the ray, which is all a shadow ray needs.
+ * Finds the nearest primitive or ground hit along a ray, closer than maxT. With anyHit set it
+ * returns as soon as anything blocks the ray, which is all a shadow ray needs; it then also
+ * skips the ground.
  */
-function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, anyHit: boolean): boolean {
+function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, anyHit: boolean, maxT: number): boolean {
   const ix = 1 / (dx || 1e-12)
   const iy = 1 / (dy || 1e-12)
   const iz = 1 / (dz || 1e-12)
 
-  let best = Infinity
+  let best = maxT
   hit.prim = MISS
 
   // The player first: it can be outside the environment's box, which is clipped to below.
@@ -428,9 +432,9 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
       pl.bvh,
       (rx * pl.cos - rz * pl.sin) * k, (oy - pl.y) * k, (rx * pl.sin + rz * pl.cos) * k,
       (dx * pl.cos - dz * pl.sin) * k, dy * k, (dx * pl.sin + dz * pl.cos) * k,
-      Infinity, anyHit,
+      best, anyHit,
     )
-    if (t < Infinity) {
+    if (t < best) {
       if (anyHit) return true
       best = t
       hit.prim = PLAYER
@@ -442,7 +446,7 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
 
   // Clip the ray to the environment's bounding box.
   let t0 = 0
-  let t1 = Infinity
+  let t1 = maxT
   let a = (-s.half - ox) * ix
   let b = (s.half - ox) * ix
   t0 = Math.max(t0, Math.min(a, b))
@@ -457,7 +461,7 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   t1 = Math.min(t1, Math.max(a, b))
   if (t0 > t1) {
     hit.t = best
-    return best < Infinity
+    return hit.prim !== MISS
   }
 
   // The ground covers the whole environment at y = 0.
@@ -488,7 +492,7 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   // No primitives (e.g. a mesh-only environment on a huge floor): skip walking empty cells.
   if (s.cellItems.length === 0) {
     hit.t = best
-    return best < Infinity
+    return hit.prim !== MISS
   }
 
   if (++s.rayId === 0xFFFFFFFF) {
@@ -578,7 +582,47 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   }
 
   hit.t = best
-  return best < Infinity
+  return hit.prim !== MISS
+}
+
+/** How far ambient occlusion rays look, in world units: about two floors of a building. */
+export const AO_RADIUS = 6
+/** How dark a fully enclosed surface gets: the hemisphere light is scaled by 1 - this. */
+export const AO_STRENGTH = 0.85
+/**
+ * Ambient occlusion directions around a normal pointing up the z axis: two staggered rings of
+ * four, low and high. Fixed rather than random, so a still frame doesn't shimmer.
+ */
+export const AO_DIRS = [[0.35, 0], [0.8, Math.PI / 4]].flatMap(([lift, turn]) => [0, 1, 2, 3].map((k) => {
+  const angle = turn! + (k * Math.PI) / 2
+  const up = Math.sin(lift! * (Math.PI / 2))
+  const out = Math.sqrt(1 - up * up)
+  return [out * Math.cos(angle), out * Math.sin(angle), up] as const
+}))
+
+/**
+ * The share of AO_DIRS rays from a surface point that travel AO_RADIUS without hitting
+ * anything (the ground included), turned into a factor for the hemisphere light.
+ */
+function ambientOcclusion(s: RaycastScene, px: number, py: number, pz: number, nx: number, ny: number, nz: number) {
+  // A tangent frame around the normal (Duff et al. 2017, "Building an Orthonormal Basis, Revisited").
+  const sign = nz >= 0 ? 1 : -1
+  const a = -1 / (sign + nz)
+  const b = nx * ny * a
+  const tx = 1 + sign * nx * nx * a
+  const ty = sign * b
+  const tz = -sign * nx
+  const bx = b
+  const by = sign + ny * ny * a
+  const bz = -ny
+  let blocked = 0
+  for (const [u, v, w] of AO_DIRS) {
+    const dx = tx * u + bx * v + nx * w
+    const dy = ty * u + by * v + ny * w
+    const dz = tz * u + bz * v + nz * w
+    if ((dy < 0 && py + dy * AO_RADIUS < 0) || trace(s, px, py, pz, dx, dy, dz, true, AO_RADIUS)) blocked++
+  }
+  return 1 - AO_STRENGTH * (blocked / AO_DIRS.length)
 }
 
 /**
@@ -616,7 +660,7 @@ export function renderScene(
       dz /= len
 
       const i = row * cols + x
-      if (!trace(s, ox, oy, oz, dx, dy, dz, false)) {
+      if (!trace(s, ox, oy, oz, dx, dy, dz, false, Infinity)) {
         ink[i] = 0
         depths[i] = Infinity
         continue
@@ -689,14 +733,23 @@ export function renderScene(
       let lg = hemiGround[1] + (hemiSky[1] - hemiGround[1]) * w
       let lb = hemiGround[2] + (hemiSky[2] - hemiGround[2]) * w
 
+      // Start secondary rays slightly off the surface so they don't hit the surface itself.
+      const px = ox + dx * t + nx * 0.05
+      const py = oy + dy * t + ny * 0.05
+      const pz = oz + dz * t + nz * 0.05
+
+      // Corners and creases see less of the sky.
+      if (s.occlusion) {
+        const ao = ambientOcclusion(s, px, py, pz, nx, ny, nz)
+        lr *= ao
+        lg *= ao
+        lb *= ao
+      }
+
       // Sun light, blocked if a shadow ray toward the sun hits anything.
       const facing = nx * sun[0] + ny * sun[1] + nz * sun[2]
       if (facing > 0) {
-        // Start the shadow ray slightly off the surface so it doesn't hit its own surface.
-        const px = ox + dx * t + nx * 0.05
-        const py = oy + dy * t + ny * 0.05
-        const pz = oz + dz * t + nz * 0.05
-        if (!trace(s, px, py, pz, sun[0], sun[1], sun[2], true)) {
+        if (!trace(s, px, py, pz, sun[0], sun[1], sun[2], true, Infinity)) {
           lr += sunLight[0] * facing
           lg += sunLight[1] * facing
           lb += sunLight[2] * facing

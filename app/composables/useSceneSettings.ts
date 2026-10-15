@@ -52,6 +52,7 @@ export function useAsciiSettings() {
     cellBackground: usePersistentState('ascii-cell-background', () => true),
     outlines: usePersistentState('ascii-outlines', () => true),
     stretch: usePersistentState('ascii-stretch', () => false),
+    occlusion: usePersistentState('ascii-occlusion', () => false),
     atlas: usePersistentState('ascii-atlas', () => true),
     method: usePersistentState<AsciiMethod>('ascii-method', () => 'cpu'),
     worker: usePersistentState('ascii-worker', () => true),

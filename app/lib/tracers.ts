@@ -39,9 +39,9 @@ export interface Tracer {
   setPlayer: (kind: PlayerKind | null, seed: number) => void
   /**
    * `time` (seconds) poses animated environments and players; `player` places the player;
-   * `timeOfDay` (see lighting.ts) sets the light.
+   * `timeOfDay` (see lighting.ts) sets the light; `occlusion` turns on ambient occlusion.
    */
-  render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose, timeOfDay?: number) => void
+  render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose, timeOfDay?: number, occlusion?: boolean) => void
   dispose: () => void
 }
 
@@ -107,10 +107,11 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
     setPlayer(kind, seed) {
       player.set(kind, seed)
     },
-    render(camera, cols, rows, time, pose, timeOfDay = NOON) {
+    render(camera, cols, rows, time, pose, timeOfDay = NOON, occlusion = false) {
       if (!scene || !generated) return
       poseScene(currentEnv, generated, scene, time, timeOfDay)
       player.attach(scene, pose, time)
+      scene.occlusion = occlusion
       const frame = emptyFrame(cols, rows)
       const start = performance.now()
       renderScene(scene, camera, cols, rows, frame.ink, frame.rgb, frame.depths, frame.normals)
@@ -190,7 +191,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     setPlayer(kind, seed) {
       for (const w of workers) post(w, { type: 'player', kind, seed })
     },
-    render(camera, cols, rows, time, player, timeOfDay = NOON) {
+    render(camera, cols, rows, time, player, timeOfDay = NOON, occlusion = false) {
       if (pending) return
       pending = workers.length
       frameStart = performance.now()
@@ -198,7 +199,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
       workers.forEach((w, k) => {
         const band = emptyFrame(cols, Math.max(0, Math.ceil((rows - k) / count)))
         const { ink, rgb, depths, normals } = band
-        post(w, { type: 'render', camera, time, timeOfDay, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
+        post(w, { type: 'render', camera, time, timeOfDay, occlusion, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
       })
     },
     dispose() {

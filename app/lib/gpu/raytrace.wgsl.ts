@@ -11,6 +11,7 @@
  *   playerF  / playerU: the same for the spawned player, in its own space
  *   cells    output, 3 words per cell: rgb + ink bytes, view depth bits, normal bytes
  */
+import { AO_DIRS, AO_RADIUS, AO_STRENGTH } from '../raycaster'
 import { FLOOR_HEIGHT, GLASS_X, GLASS_Y, HASH_COLUMN, HASH_FACE, HASH_ROW, LIT_SHARE, WINDOW_SPACING } from '../windows'
 
 const f = (n: number) => (Number.isInteger(n) ? `${n}.0` : `${n}`)
@@ -35,7 +36,7 @@ struct Params {
   meshIdx: vec4u,     // meshU offsets: order, indices
   player2: vec4u,     // playerF offsets: positions, normals, albedo; w: 1 if there is a player
   playerIdx: vec4u,   // playerU offsets: order, indices
-  gridItems: vec4u,   // x: offset of cellItems in grid
+  gridItems: vec4u,   // x: offset of cellItems in grid; y: 1 for ambient occlusion
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -267,10 +268,10 @@ fn hitSphere(b: array<f32, 6>, o: vec3f, d: vec3f) -> vec4f {
 
 // ---- trace() ----
 
-fn trace(o: vec3f, d: vec3f, anyHit: bool) -> Hit {
+fn trace(o: vec3f, d: vec3f, anyHit: bool, maxT: f32) -> Hit {
   var h: Hit;
   h.prim = MISS;
-  var best = INF;
+  var best = maxT;
 
   // The player first, in its own space: undo position, heading and scale.
   if (P.player2.w == 1u) {
@@ -281,8 +282,8 @@ fn trace(o: vec3f, d: vec3f, anyHit: bool) -> Hit {
     let rz = o.z - P.player.z;
     let lo = vec3f((rx * c - rz * s) * k, (o.y - P.player.y) * k, (rx * s + rz * c) * k);
     let ld = vec3f((d.x * c - d.z * s) * k, d.y * k, (d.x * s + d.z * c) * k);
-    let t = intersectBvh(true, lo, ld, INF, anyHit, &h);
-    if (t < INF) {
+    let t = intersectBvh(true, lo, ld, best, anyHit, &h);
+    if (t < best) {
       h.prim = PLAYER;
       if (anyHit) { return h; }
       best = t;
@@ -293,7 +294,7 @@ fn trace(o: vec3f, d: vec3f, anyHit: bool) -> Hit {
   let inv = inverse(d);
   let half = P.right.w;
   var t0 = 0.0;
-  var t1 = INF;
+  var t1 = maxT;
   var a = (-half - o.x) * inv.x;
   var b = (half - o.x) * inv.x;
   t0 = max(t0, min(a, b));
@@ -408,6 +409,27 @@ fn trace(o: vec3f, d: vec3f, anyHit: bool) -> Hit {
   return h;
 }
 
+// ---- Ambient occlusion (ambientOcclusion() in raycaster.ts) ----
+
+const AO_RADIUS = ${f(AO_RADIUS)};
+const AO_STRENGTH = ${f(AO_STRENGTH)};
+var<private> AO_DIRS: array<vec3f, ${AO_DIRS.length}> = array<vec3f, ${AO_DIRS.length}>(${AO_DIRS.map(d => `vec3f(${d.map(f).join(', ')})`).join(', ')});
+
+fn ambientOcclusion(p: vec3f, n: vec3f) -> f32 {
+  let sgn = select(-1.0, 1.0, n.z >= 0.0);
+  let a = -1.0 / (sgn + n.z);
+  let b = n.x * n.y * a;
+  let tan1 = vec3f(1.0 + sgn * n.x * n.x * a, sgn * b, -sgn * n.x);
+  let tan2 = vec3f(b, sgn + n.y * n.y * a, -n.y);
+  var blocked = 0.0;
+  for (var k = 0u; k < ${AO_DIRS.length}u; k++) {
+    let l = AO_DIRS[k];
+    let d = tan1 * l.x + tan2 * l.y + n * l.z;
+    if ((d.y < 0.0 && p.y + d.y * AO_RADIUS < 0.0) || trace(p, d, true, AO_RADIUS).prim != MISS) { blocked += 1.0; }
+  }
+  return 1.0 - AO_STRENGTH * (blocked / ${f(AO_DIRS.length)});
+}
+
 // ---- Shading (renderScene() in raycaster.ts) ----
 
 // The CPU converts through a 4096-step table; quantize the same way so bytes match.
@@ -458,7 +480,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   let d = normalize(f + P.right.xyz * sx + P.up.xyz * sy);
   let o = P.camPos.xyz;
 
-  let h = trace(o, d, false);
+  let h = trace(o, d, false, INF);
   if (h.prim == MISS) {
     cells[i * 3u] = 0u;
     cells[i * 3u + 1u] = 0x7f800000u; // +Infinity: sky
@@ -514,11 +536,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
   let w = n.y * 0.5 + 0.5;
   var light = P.hemiGround.xyz + (P.hemiSky.xyz - P.hemiGround.xyz) * w;
+  let sp = o + d * t + n * 0.05;
+  if (P.gridItems.y == 1u) { light *= ambientOcclusion(sp, n); }
   let sun = P.sun.xyz;
   let facing = dot(n, sun);
   if (facing > 0.0) {
-    let sp = o + d * t + n * 0.05;
-    if (trace(sp, sun, true).prim == MISS) { light += P.sunLight.xyz * facing; }
+    if (trace(sp, sun, true, INF).prim == MISS) { light += P.sunLight.xyz * facing; }
   }
 
   let depth = t * dot(d, f);
