@@ -55,6 +55,8 @@ const emit = defineEmits<{
 
 const container = ref<HTMLDivElement>()
 const canvas = ref<HTMLCanvasElement>()
+/** Over `canvas`: the atlas path draws here with WebGL2. Lets pointer events through. */
+const glCanvas = ref<HTMLCanvasElement>()
 const { time: timeOfDay } = useTimeOfDay()
 const lighting = computed(() => lightingAt(timeOfDay.value, props.env.sky))
 const skyCss = computed(() => hexToCss(lighting.value.sky))
@@ -63,7 +65,7 @@ const view = useCameraView(props.env)
 const playerKind = usePlayerKind()
 const playerPose = usePlayerPose(props.env)
 const chaseCamera = useChaseCamera()
-const glyphs = createGlyphRenderer()
+let glyphs = createGlyphRenderer()
 const meter = createFrameMeter(perf => emit('perf', perf))
 let tracer: Tracer | undefined
 let ctx: CanvasRenderingContext2D | undefined
@@ -250,7 +252,10 @@ function onWheel(e: WheelEvent) {
 onMounted(async () => {
   // .client components render their template after mount; wait for the refs to exist.
   await nextTick()
-  if (!pixels) ctx = canvas.value!.getContext('2d')!
+  if (!pixels) {
+    ctx = canvas.value!.getContext('2d')!
+    glyphs = createGlyphRenderer(glCanvas.value)
+  }
   startTracer()
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container.value!)
@@ -292,6 +297,7 @@ onBeforeUnmount(() => {
       @wheel="onWheel"
       @contextmenu.prevent
     />
+    <canvas v-if="!pixels" ref="glCanvas" class="glyphs" />
   </div>
 </template>
 
@@ -312,5 +318,11 @@ canvas {
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+.glyphs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 </style>

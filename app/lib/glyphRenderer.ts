@@ -3,13 +3,16 @@
  *
  * Two ways to draw:
  * - Glyph atlas (default): every ramp character is drawn once in white and kept as an alpha
- *   mask. Each frame writes glyph pixels straight into an ImageData buffer and shows it with
- *   one putImageData. Measured ~2x faster than fillText, and ~7x faster than stamping glyphs
- *   with drawImage (which runs per call in software when canvas isn't GPU-backed).
+ *   mask. Given a second canvas for WebGL2, a shader blends glyphs from it per pixel (see
+ *   glyphGl.ts) and the CPU only fills in one color pair per cell. Without WebGL2 the CPU
+ *   writes every glyph pixel into an ImageData buffer and shows it with one putImageData:
+ *   ~2x faster than fillText, ~7x faster than stamping glyphs with drawImage, but still most
+ *   of a frame at ~3M device pixels.
  * - fillText: one canvas text call per character. Kept for comparison.
  */
 import { cellColors, GLYPHS, pickGlyphs, type Cells, type StyleOptions } from './cellStyle'
 import { hexToBytes, hexToCss } from './color'
+import { createGlyphGl, type GlyphGl } from './glyphGl'
 
 // Line height relative to font size, so rows don't touch.
 const LINE_SPACING = 7 / 6
@@ -32,7 +35,11 @@ export interface DrawOptions extends StyleOptions {
 // read as letters anyway, and a strong shade only tints their cells (pale pines, row stripes).
 const FULL_SHADE_FONT_SIZE = 12
 
-export function createGlyphRenderer() {
+/** `glCanvas`, if given, sits over the 2D canvas and draws the atlas path with WebGL2. */
+export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
+  let gpu: GlyphGl | null | undefined
+  /** Which canvas holds the picture, so switching paths can clear the other. */
+  let drawnOn: 'gl' | '2d' | undefined
   let cols = 0
   let rows = 0
   let cellW = 0
@@ -50,6 +57,8 @@ export function createGlyphRenderer() {
   let glyphs = new Uint8Array(0)
   let edges = new Uint8Array(0)
   let edgeStrength = new Float32Array(0)
+  /** For the WebGL path: two RGBA texels per cell, see glyphGl.ts. */
+  let cellData = new Uint8Array(0)
 
   /** Sizes the canvas and character grid. Returns the new grid size. */
   function resize(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number, fontSize: number) {
@@ -91,6 +100,18 @@ export function createGlyphRenderer() {
     glyphs = new Uint8Array(cols * rows)
     edges = new Uint8Array(cols * rows)
     edgeStrength = new Float32Array(cols * rows)
+    cellData = new Uint8Array(cols * rows * 8)
+    if (glCanvas && gpu === undefined) {
+      try {
+        gpu = createGlyphGl(glCanvas)
+      }
+      catch (error) {
+        console.error('WebGL glyphs:', error)
+        gpu = null
+      }
+    }
+    gpu?.resize(canvas.width, canvas.height, cols, rows, cellW, cellH, glyphAlpha, atlasWidth)
+    drawnOn = undefined
 
     // Cell size in CSS pixels, for mapping screen positions to cells.
     return { cols, rows, cellWidth: charWidth, cellHeight: lineHeight }
@@ -99,8 +120,50 @@ export function createGlyphRenderer() {
   function draw(ctx: CanvasRenderingContext2D, cells: Cells, options: DrawOptions) {
     if (cells.ink.length !== cols * rows) return
     pickGlyphs(cells, cols, rows, options, glyphs, edgeStrength, edges)
-    if (options.atlas) drawWithAtlas(ctx, cells.rgb, options)
+    const target = options.atlas && gpu ? 'gl' : '2d'
+    if (target !== drawnOn) {
+      if (target === 'gl') ctx.clearRect(0, 0, width, height)
+      else gpu?.clear()
+      drawnOn = target
+    }
+    if (target === 'gl') drawWithGl(gpu!, cells.rgb, options)
+    else if (options.atlas) drawWithAtlas(ctx, cells.rgb, options)
     else drawWithFillText(ctx, cells.rgb, options)
+  }
+
+  function drawWithGl(gl: GlyphGl, rgb: Uint8Array, options: DrawOptions) {
+    const { mask } = options
+    const cellGlyphs = glyphs
+    const cellEdges = edgeStrength
+    const data = cellData
+    const sky = hexToBytes(options.sky)
+    const c = new Uint8Array(6)
+    for (let i = 0; i < cellGlyphs.length; i++) {
+      const o = i * 8
+      if (mask && !mask[i]) {
+        data[o + 7] = 0
+        continue
+      }
+      const g = cellGlyphs[i]!
+      if (g === 0) {
+        data[o] = data[o + 4] = sky[0]!
+        data[o + 1] = data[o + 5] = sky[1]!
+        data[o + 2] = data[o + 6] = sky[2]!
+        data[o + 3] = 0
+        data[o + 7] = 255
+        continue
+      }
+      cellColors(rgb, i, cellEdges[i]!, options, shade, sky, c)
+      data[o] = c[0]!
+      data[o + 1] = c[1]!
+      data[o + 2] = c[2]!
+      data[o + 3] = g
+      data[o + 4] = c[3]!
+      data[o + 5] = c[4]!
+      data[o + 6] = c[5]!
+      data[o + 7] = 255
+    }
+    gl.draw(data, sky, mask ? 0 : 1)
   }
 
   function drawWithFillText(ctx: CanvasRenderingContext2D, rgb: Uint8Array, options: DrawOptions) {
