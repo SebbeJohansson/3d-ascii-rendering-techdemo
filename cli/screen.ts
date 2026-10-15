@@ -65,6 +65,8 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         const i = y * cols + x
         const g = glyphs[i]!
         cellColors(cells.rgb, i, edgeStrength[i]!, options, 1, options.sky, colors)
+        // Rays that hit nothing have no color of their own: show the sky.
+        if (!g) colors.set(options.sky, 3)
         const cellFg = g ? (colors[0]! << 16) | (colors[1]! << 8) | colors[2]! : 0
         const cellBg = (colors[3]! << 16) | (colors[4]! << 8) | colors[5]!
         const packed = (g * 0x1000000 + cellFg) >>> 0
