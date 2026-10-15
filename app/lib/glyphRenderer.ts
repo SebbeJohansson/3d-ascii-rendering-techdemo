@@ -3,8 +3,9 @@
  *
  * Two ways to draw:
  * - Glyph atlas (default): every ramp character is drawn once in white and kept as an alpha
- *   mask. Given a second canvas for WebGL2, a shader blends glyphs from it per pixel (see
- *   glyphGl.ts) and the CPU only fills in one color pair per cell. Without WebGL2 the CPU
+ *   mask. Given a second canvas for WebGL2, shaders draw from it (see glyphGl.ts): they pick
+ *   each cell's glyph and colors from the traced frame too, except for a lens or stretched
+ *   contrast, where the CPU picks them and the shader only blends. Without WebGL2 the CPU
  *   writes every glyph pixel into an ImageData buffer and shows it with one putImageData:
  *   ~2x faster than fillText, ~7x faster than stamping glyphs with drawImage, but still most
  *   of a frame at ~3M device pixels.
@@ -119,13 +120,19 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
 
   function draw(ctx: CanvasRenderingContext2D, cells: Cells, options: DrawOptions) {
     if (cells.ink.length !== cols * rows) return
-    pickGlyphs(cells, cols, rows, options, glyphs, edgeStrength, edges)
     const target = options.atlas && gpu ? 'gl' : '2d'
     if (target !== drawnOn) {
       if (target === 'gl') ctx.clearRect(0, 0, width, height)
       else gpu?.clear()
       drawnOn = target
     }
+    // The shader can pick glyphs itself, unless the frame as a whole decides: a lens mask, or
+    // contrast stretched over the frame's ink range.
+    if (target === 'gl' && !options.mask && !options.stretch) {
+      gpu!.drawTraced(cells, { ...options, shade }, hexToBytes(options.sky))
+      return
+    }
+    pickGlyphs(cells, cols, rows, options, glyphs, edgeStrength, edges)
     if (target === 'gl') drawWithGl(gpu!, cells.rgb, options)
     else if (options.atlas) drawWithAtlas(ctx, cells.rgb, options)
     else drawWithFillText(ctx, cells.rgb, options)
