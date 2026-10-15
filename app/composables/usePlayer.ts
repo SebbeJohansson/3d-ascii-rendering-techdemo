@@ -20,12 +20,20 @@ interface ChaseCamera {
   pitch: number
   /** Multiplies the player's camera distance. */
   zoom: number
+  /** performance.now() of the last drag or scroll, for easing back behind the player. */
+  touched: number
 }
 
 const MIN_PITCH = 0.02
 const MAX_PITCH = 1.45
 const MIN_ZOOM = 0.35
 const MAX_ZOOM = 4
+/** Seconds after the last drag or scroll before a moving player's camera eases back behind it. */
+const RECENTER_DELAY = 1.5
+/** How fast it eases back. Higher is snappier. */
+const RECENTER_RATE = 1.5
+/** Slower than this (world units per second) counts as standing still. */
+const MOVING_SPEED = 1
 
 /** The pitch a player's camera settings give, before any dragging. */
 const defaultPitch = ({ camera }: Player) => Math.atan2(camera.height - camera.lookHeight, camera.distance)
@@ -35,7 +43,7 @@ const defaultPitch = ({ camera }: Player) => Math.atan2(camera.height - camera.l
  * zoom() calls, with the same feel as orbiting without a player.
  */
 export function useChaseCamera() {
-  const chase = useState<ChaseCamera>('chase-camera', () => ({ yaw: 0, pitch: 0.3, zoom: 1 }))
+  const chase = useState<ChaseCamera>('chase-camera', () => ({ yaw: 0, pitch: 0.3, zoom: 1, touched: 0 }))
   return {
     chase,
     /** Rotates around the player. dx/dy are pointer movement in pixels. */
@@ -43,13 +51,27 @@ export function useChaseCamera() {
       const { yaw, pitch } = chase.value
       chase.value.yaw = yaw - (2 * Math.PI * dx) / viewportHeight
       chase.value.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch + (2 * Math.PI * dy) / viewportHeight))
+      chase.value.touched = performance.now()
     },
     /** Moves toward or away from the player. deltaY is a wheel delta. */
     zoom(deltaY: number) {
       chase.value.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, chase.value.zoom * Math.exp(deltaY * 0.001)))
+      chase.value.touched = performance.now()
     },
     reset(player: Player) {
-      chase.value = { yaw: 0, pitch: defaultPitch(player), zoom: 1 }
+      chase.value = { yaw: 0, pitch: defaultPitch(player), zoom: 1, touched: 0 }
+    },
+    /**
+     * Eases a little way back to straight behind the player at its starting tilt and
+     * distance, for a frame `dt` seconds long.
+     */
+    recenter(player: Player, dt: number) {
+      const k = 1 - Math.exp(-RECENTER_RATE * dt)
+      const c = chase.value
+      c.yaw += Math.atan2(-Math.sin(c.yaw), Math.cos(c.yaw)) * k
+      c.pitch += (defaultPitch(player) - c.pitch) * k
+      // In log space, so zooming in and out ease back at the same pace.
+      c.zoom = Math.exp(Math.log(c.zoom) * (1 - k))
     },
   }
 }
@@ -137,6 +159,7 @@ export function usePlayerDriver(env: Environment) {
     if (!kind.value || !pose.value) return
     const player = getPlayer(kind.value)
     let { position: [x, y, z], heading } = pose.value
+    const from = pose.value.position
 
     const throttle = Number(pressed(KEYS.forward)) - Number(pressed(KEYS.back))
     const steer = Number(pressed(KEYS.left)) - Number(pressed(KEYS.right))
@@ -166,6 +189,10 @@ export function usePlayerDriver(env: Environment) {
     x = Math.min(edge, Math.max(-edge, x))
     z = Math.min(edge, Math.max(-edge, z))
     pose.value = { position: [x, y, z], heading }
+
+    // Once it moves and the mouse has been left alone a moment, the camera eases back behind.
+    const moving = Math.hypot(x - from[0], y - from[1], z - from[2]) > MOVING_SPEED * dt
+    if (moving && performance.now() - chase.value.touched > RECENTER_DELAY * 1000) chaseCamera.recenter(player, dt)
 
     // Chase camera: swings round after the player with a short lag, at the angle and
     // distance the mouse set.
