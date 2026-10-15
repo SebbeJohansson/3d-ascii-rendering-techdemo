@@ -1,7 +1,6 @@
 import type { Environment, EnvironmentScene } from '~/environments'
 import { resolveCollisions } from '~/lib/collision'
-import type { Vec3 } from '~/lib/math'
-import { getPlayer, type PlayerKind, type PlayerPose } from '~/players'
+import { getPlayer, type Player, type PlayerKind, type PlayerPose } from '~/players'
 
 /** Which player is spawned, if any. Shared by every environment and view. */
 export function usePlayerKind() {
@@ -11,6 +10,48 @@ export function usePlayerKind() {
 /** Where the player is in an environment, shared by its 3D and ASCII views. */
 export function usePlayerPose(env: Environment) {
   return useState<PlayerPose | undefined>(`player-${env.id}`, () => undefined)
+}
+
+/** Where the chase camera sits around the player, set by dragging and the mouse wheel. */
+interface ChaseCamera {
+  /** Radians around the player, added to its heading. 0 is straight behind. */
+  yaw: number
+  /** Radians above the horizon. */
+  pitch: number
+  /** Multiplies the player's camera distance. */
+  zoom: number
+}
+
+const MIN_PITCH = 0.02
+const MAX_PITCH = 1.45
+const MIN_ZOOM = 0.35
+const MAX_ZOOM = 4
+
+/** The pitch a player's camera settings give, before any dragging. */
+const defaultPitch = ({ camera }: Player) => Math.atan2(camera.height - camera.lookHeight, camera.distance)
+
+/**
+ * The chase camera around the spawned player. Both views turn mouse input into orbit() and
+ * zoom() calls, with the same feel as orbiting without a player.
+ */
+export function useChaseCamera() {
+  const chase = useState<ChaseCamera>('chase-camera', () => ({ yaw: 0, pitch: 0.3, zoom: 1 }))
+  return {
+    chase,
+    /** Rotates around the player. dx/dy are pointer movement in pixels. */
+    orbit(dx: number, dy: number, viewportHeight: number) {
+      const { yaw, pitch } = chase.value
+      chase.value.yaw = yaw - (2 * Math.PI * dx) / viewportHeight
+      chase.value.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch + (2 * Math.PI * dy) / viewportHeight))
+    },
+    /** Moves toward or away from the player. deltaY is a wheel delta. */
+    zoom(deltaY: number) {
+      chase.value.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, chase.value.zoom * Math.exp(deltaY * 0.001)))
+    },
+    reset(player: Player) {
+      chase.value = { yaw: 0, pitch: defaultPitch(player), zoom: 1 }
+    },
+  }
 }
 
 /** Dragon climb and dive speed, world units per second. */
@@ -41,6 +82,8 @@ export function usePlayerDriver(env: Environment) {
   const pose = usePlayerPose(env)
   const view = useCameraView(env)
   const { seed, size } = useSceneSettings(env)
+  const chaseCamera = useChaseCamera()
+  const { chase } = chaseCamera
   const held = new Set<string>()
   let speed = 0
   let cameraHeading = 0
@@ -62,6 +105,7 @@ export function usePlayerDriver(env: Environment) {
 
   watch(kind, (k, previous) => {
     held.clear()
+    if (k) chaseCamera.reset(getPlayer(k))
     if (!k) pose.value = undefined
     else if (!pose.value) spawn()
     // Swapping dragon for car mid-flight: land where the dragon was.
@@ -105,15 +149,22 @@ export function usePlayerDriver(env: Environment) {
     z = Math.min(edge, Math.max(-edge, z))
     pose.value = { position: [x, y, z], heading }
 
-    // Chase camera: behind and above, swinging round after the player with a short lag.
+    // Chase camera: swings round after the player with a short lag, at the angle and
+    // distance the mouse set.
     cameraHeading += angleTo(cameraHeading, heading) * (1 - Math.exp(-CAMERA_FOLLOW * dt))
     const { distance, height, lookHeight } = player.camera
-    const camera: Vec3 = [
-      x - Math.cos(cameraHeading) * distance,
-      Math.max(1, y + height),
-      z + Math.sin(cameraHeading) * distance,
-    ]
-    view.value = { position: camera, target: [x, y + lookHeight, z] }
+    const { yaw, pitch, zoom } = chase.value
+    const around = cameraHeading + yaw
+    const reach = Math.hypot(distance, height - lookHeight) * zoom
+    const ty = y + lookHeight
+    view.value = {
+      position: [
+        x - Math.cos(around) * Math.cos(pitch) * reach,
+        Math.max(1, ty + Math.sin(pitch) * reach),
+        z + Math.sin(around) * Math.cos(pitch) * reach,
+      ],
+      target: [x, ty, z],
+    }
   }
 
   function tick(now: number) {

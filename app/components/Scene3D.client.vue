@@ -20,8 +20,32 @@ const container = ref<HTMLDivElement>()
 const view = useCameraView(props.env)
 const playerKind = usePlayerKind()
 const playerPose = usePlayerPose(props.env)
-/** A spawned player owns the camera; mouse orbiting is off until it is removed. */
+/** A spawned player owns the camera: the mouse moves its chase camera, not the orbit controls. */
 const following = computed(() => !!playerPose.value)
+const chaseCamera = useChaseCamera()
+let drag: { x: number, y: number } | undefined
+
+function onPointerDown(e: PointerEvent) {
+  if (!following.value) return
+  container.value!.setPointerCapture(e.pointerId)
+  drag = { x: e.clientX, y: e.clientY }
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!drag || !following.value) return
+  chaseCamera.orbit(e.clientX - drag.x, e.clientY - drag.y, container.value!.clientHeight)
+  drag = { x: e.clientX, y: e.clientY }
+}
+
+function onPointerUp() {
+  drag = undefined
+}
+
+function onWheel(e: WheelEvent) {
+  if (!following.value) return
+  e.preventDefault()
+  chaseCamera.zoom(e.deltaY)
+}
 
 const { scene, camera, build, animate, setPlayer, placePlayer, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
@@ -121,7 +145,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="container" class="scene" />
+  <div
+    ref="container"
+    class="scene"
+    @pointerdown="onPointerDown"
+    @pointermove="onPointerMove"
+    @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+    @wheel="onWheel"
+    @contextmenu.prevent
+  />
 </template>
 
 <style scoped>

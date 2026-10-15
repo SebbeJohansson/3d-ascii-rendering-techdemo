@@ -56,6 +56,7 @@ function viewPath(envId: string, mode: ViewMode) {
       <template v-if="getPlayer(playerKind).flies">
         · <kbd>Space</kbd> up · <kbd>Shift</kbd> down
       </template>
+      · drag to look · scroll to zoom
     </p>
     <label>
       Seed

@@ -41,6 +41,7 @@ const skyCss = computed(() => hexToCss(props.env.sky))
 const view = useCameraView(props.env)
 const playerKind = usePlayerKind()
 const playerPose = usePlayerPose(props.env)
+const chaseCamera = useChaseCamera()
 const glyphs = createGlyphRenderer()
 const meter = createFrameMeter(perf => emit('perf', perf))
 let tracer: Tracer | undefined
@@ -122,8 +123,8 @@ function tick() {
   tracer.render(camera(), cols, rows, performance.now() / 1000, player())
 }
 
-// Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Off while a
-// spawned player owns the camera.
+// Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
+// player, any drag orbits and the wheel zooms, both through its chase camera.
 let drag: { x: number, y: number, pan: boolean } | undefined
 
 function setView(next: CameraView) {
@@ -132,7 +133,6 @@ function setView(next: CameraView) {
 }
 
 function onPointerDown(e: PointerEvent) {
-  if (playerPose.value) return
   canvas.value!.setPointerCapture(e.pointerId)
   drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }
 }
@@ -143,7 +143,8 @@ function onPointerMove(e: PointerEvent) {
   const dy = e.clientY - drag.y
   drag.x = e.clientX
   drag.y = e.clientY
-  setView(drag.pan ? panView(view.value, dx, dy, height) : orbitView(view.value, dx, dy, height))
+  if (playerPose.value) chaseCamera.orbit(dx, dy, height)
+  else setView(drag.pan ? panView(view.value, dx, dy, height) : orbitView(view.value, dx, dy, height))
 }
 
 function onPointerUp() {
@@ -152,8 +153,8 @@ function onPointerUp() {
 
 function onWheel(e: WheelEvent) {
   e.preventDefault()
-  if (playerPose.value) return
-  setView(zoomView(view.value, e.deltaY))
+  if (playerPose.value) chaseCamera.zoom(e.deltaY)
+  else setView(zoomView(view.value, e.deltaY))
 }
 
 onMounted(async () => {
