@@ -13,7 +13,7 @@ import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose
 import type { TracedFrame } from '../app/lib/tracers'
 import { getPlayer, type PlayerKind, type PlayerPose } from '../app/players'
 import { createInput, type MouseEvent } from './input'
-import { createScreen } from './screen'
+import { createScreen, type Resolution } from './screen'
 import { createNodeTracer } from './tracer'
 
 /** Terminal cells are about twice as tall as they are wide. */
@@ -34,6 +34,7 @@ const { values, positionals } = parseArgs({
     'log-input': { type: 'string' },
     outlines: { type: 'boolean', default: true },
     backgrounds: { type: 'boolean', default: true },
+    blocks: { type: 'boolean', default: false },
     color: { type: 'boolean', default: true },
     help: { type: 'boolean', short: 'h' },
   },
@@ -47,12 +48,13 @@ const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --workers N       ray tracing threads (default: cores - 1, at most 8)
   --no-outlines     no line characters on edges
   --no-backgrounds  characters only, no colored cells
+  --blocks          twice the detail: half-cell color blocks instead of characters
   --no-color        dark characters on the sky color
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
-      Space/Shift dragon up/down · Tab next environment · N new world · O outlines
-      B backgrounds · Esc quit
+      Space/Shift dragon up/down · Tab next environment · R characters/blocks
+      N new world · O outlines · B backgrounds · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom.`
 
 if (values.help) {
@@ -86,7 +88,8 @@ let chase = defaultChase()
 /** Terminal cells the frame covers, between the status bar and the key bar. */
 let cols = 0
 let rows = 0
-/** The grid the tracer fills. */
+let resolution: Resolution = values.blocks ? 'blocks' : 'characters'
+/** The grid the tracer fills: rows × 2 in block mode. */
 let grid = { cols: 0, rows: 0 }
 let dirty = true
 let perf: FramePerf | undefined
@@ -122,7 +125,7 @@ function statusBar(loading?: string) {
   const fps = perf ? (perf.fps >= 1 ? `${Math.round(perf.fps)} fps · ${perf.ms.toFixed(1)} ms` : 'idle') : ''
   const releases = input.releases ? 'key releases' : 'key repeat'
   const what = loading ? `loading ${loading}…` : summary
-  return ` ${env.name} · ${what} · seed ${seed} · ${grid.cols}×${grid.rows} · ${workerCount} threads · ${fps} · ${releases}`
+  return ` ${env.name} · ${what} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${fps} · ${releases}`
 }
 
 /** The keys that do something right now, for the bar at the bottom. */
@@ -130,16 +133,16 @@ function keyBar() {
   const moves = !playerKind
     ? 'orbit: WASD look · Q/E zoom'
     : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · N new · Esc quit`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · R ${resolution === 'blocks' ? 'characters' : 'blocks'} · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
   screen.bars(statusBar(loading), keyBar())
 }
 
-/** Fits the frame to the terminal, and redraws everything. */
+/** Fits the frame to the terminal and resolution, and redraws everything. */
 function layout() {
-  grid = screen.resize(process.stdout.columns, process.stdout.rows)
+  grid = screen.resize(process.stdout.columns, process.stdout.rows, resolution)
   cols = process.stdout.columns
   rows = Math.max(1, process.stdout.rows - 2)
   dirty = true
@@ -216,10 +219,11 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === 'shift+tab') cycleEnvironment(-1)
     else if (name === 'o') style.outlines = !style.outlines
     else if (name === 'b') style.cellBackground = !style.cellBackground
+    else if (name === 'r') resolution = resolution === 'blocks' ? 'characters' : 'blocks'
     else return
     dirty = true
     // Restyling needs every cell rewritten.
-    if (name === 'o' || name === 'b') layout()
+    if (name === 'o' || name === 'b' || name === 'r') layout()
     else showBars()
   },
   onMouse,
