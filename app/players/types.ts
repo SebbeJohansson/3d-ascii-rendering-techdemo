@@ -1,4 +1,5 @@
 import type { Mesh } from '../environments/types'
+import type { Collider } from '../lib/collision'
 
 export type PlayerKind = 'dragon' | 'car'
 
@@ -15,7 +16,7 @@ export interface Player {
   name: string
   /** Model units to world units. */
   scale: number
-  /** Leaves the ground: Space climbs and Shift dives. Otherwise it stays on y = 0. */
+  /** Leaves the ground: Space climbs and Shift dives. Otherwise it stays on the ground. */
   flies: boolean
   /** Top speed forward, in world units per second. Reverse is a third of it. */
   speed: number
@@ -23,6 +24,8 @@ export interface Player {
   acceleration: number
   /** Radians per second at full steering. */
   turnRate: number
+  /** Its body for collisions, in world units. */
+  collider: Collider
   /** Chase camera: how far behind and above it sits, and how high above the player it aims. */
   camera: { distance: number, height: number, lookHeight: number }
   build: (seed: number) => PlayerModel

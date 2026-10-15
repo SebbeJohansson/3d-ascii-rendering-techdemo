@@ -1,4 +1,5 @@
-import type { Environment } from '~/environments'
+import type { Environment, EnvironmentScene } from '~/environments'
+import { resolveCollisions } from '~/lib/collision'
 import type { Vec3 } from '~/lib/math'
 import { getPlayer, type PlayerKind, type PlayerPose } from '~/players'
 
@@ -39,12 +40,15 @@ export function usePlayerDriver(env: Environment) {
   const kind = usePlayerKind()
   const pose = usePlayerPose(env)
   const view = useCameraView(env)
-  const { size } = useSceneSettings(env)
+  const { seed, size } = useSceneSettings(env)
   const held = new Set<string>()
   let speed = 0
   let cameraHeading = 0
   let frameId = 0
   let last = 0
+  /** The environment's solids to collide with, generated when first needed. */
+  let world: EnvironmentScene | undefined
+  watch([seed, size], () => (world = undefined))
 
   function spawn() {
     const { position: p, target: t } = view.value
@@ -89,7 +93,16 @@ export function usePlayerDriver(env: Environment) {
       const climb = Number(pressed(KEYS.up)) - Number(pressed(KEYS.down))
       y = Math.min(MAX_ALTITUDE, Math.max(0, y + climb * CLIMB_SPEED * dt))
     }
-    else y = 0
+
+    // Keep out of buildings, trees and rocks, and on the environment's ground.
+    world ??= env.generate(seed.value, size.value)
+    const collided = resolveCollisions(world.primitives, [x, y, z], player.collider, player.flies)
+    ;[x, y, z] = collided.position
+    // Scraping along a wall bleeds off speed.
+    if (collided.hit) speed *= Math.exp(-4 * dt)
+    const edge = world.extent / 2 - player.collider.radius
+    x = Math.min(edge, Math.max(-edge, x))
+    z = Math.min(edge, Math.max(-edge, z))
     pose.value = { position: [x, y, z], heading }
 
     // Chase camera: behind and above, swinging round after the player with a short lag.

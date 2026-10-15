@@ -78,6 +78,7 @@ export const car: Player = {
   speed: 45,
   acceleration: 30,
   turnRate: 1.8,
+  collider: { radius: 1.8, height: 2.4 },
   camera: { distance: 14, height: 5, lookHeight: 2 },
 
   build(seed) {

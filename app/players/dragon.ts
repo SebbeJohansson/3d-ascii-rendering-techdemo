@@ -13,6 +13,8 @@ export const dragon: Player = {
   speed: 70,
   acceleration: 40,
   turnRate: 1.4,
+  // About 24 long with a 19 wingspan. The collider covers the body, not the wingtips.
+  collider: { radius: 5, height: 11 },
   camera: { distance: 32, height: 11, lookHeight: 7 },
 
   build(seed) {
