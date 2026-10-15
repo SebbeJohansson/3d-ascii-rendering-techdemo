@@ -13,6 +13,7 @@ definePageMeta({
 const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
 usePlayerDriver(env.value)
+useDayCycle()
 const ascii = reactive(useAsciiSettings())
 const stats3d = ref<string>()
 const statsAscii = ref<string>()

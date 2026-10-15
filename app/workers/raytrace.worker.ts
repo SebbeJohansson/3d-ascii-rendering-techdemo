@@ -11,7 +11,7 @@ export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
   | { type: 'player', kind: PlayerKind | null, seed: number }
   /** Traces rows rowStart, rowStart + rowStep, ... into tightly packed ink/rgb. */
-  | { type: 'render', camera: Camera, time: number, player?: PlayerPose, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
+  | { type: 'render', camera: Camera, time: number, timeOfDay: number, player?: PlayerPose, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 export type WorkerResponse =
   | { type: 'scene', summary: string }
@@ -39,9 +39,9 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     player.set(msg.kind, msg.seed)
   }
   else if (scene && generated) {
-    const { camera, time, player: pose, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg
+    const { camera, time, timeOfDay, player: pose, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg
     // Every worker poses the scene for the same time, so all rows show the same moment.
-    poseScene(envId, generated, scene, time)
+    poseScene(envId, generated, scene, time, timeOfDay)
     player.attach(scene, pose, time)
     renderScene(scene, camera, cols, rows, ink, rgb, depths, normals, rowStart, rowStep)
     // Hand the buffers back without copying.

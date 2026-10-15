@@ -2,6 +2,7 @@
 import { ENVIRONMENTS, type Environment } from '~/environments'
 import type { FramePerf } from '~/lib/frameMeter'
 import type { ViewMode } from '~/composables/useBenchmark'
+import { DAY_LENGTH, formatTimeOfDay } from '~/environments/lighting'
 import { getPlayer, PLAYERS } from '~/players'
 
 const props = defineProps<{
@@ -14,6 +15,7 @@ const props = defineProps<{
 
 const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
+const { time: timeOfDay, cycling } = useTimeOfDay()
 
 const benchmark = useBenchmark()
 /** The benchmark for this environment, running or finished. */
@@ -68,6 +70,14 @@ function randomize() {
     <label>
       Size: {{ env.size.label(size) }}
       <input v-model.number="size" type="range" :min="env.size.min" :max="env.size.max">
+    </label>
+    <label>
+      Time: {{ formatTimeOfDay(timeOfDay) }}
+      <input v-model.number="timeOfDay" type="range" min="0" max="1" step="0.001">
+    </label>
+    <label class="toggle">
+      <input v-model="cycling" type="checkbox">
+      Day and night cycle ({{ DAY_LENGTH / 60 }} min day)
     </label>
     <slot />
     <button type="button" class="primary" @click="randomize">
@@ -191,6 +201,11 @@ nav .active {
 .perf.parts {
   font-weight: 400;
   color: #555;
+}
+
+.toggle {
+  flex-direction: row !important;
+  align-items: center;
 }
 
 .secondary {

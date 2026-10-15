@@ -22,6 +22,10 @@ You can look at each environment three ways:
 
 Swap `city` for `forest` or `dragon` to change scene.
 
+### Day and night
+
+The **Time** slider in the panel moves the sun across the sky, and **Day and night cycle** runs a full day every two minutes. The sun gets lower and warmer towards the evening, the sky goes orange and then dark blue, and at night a dim moon takes over the shadows while windows in the city light up. The 3D view and the ray tracer compute the same lighting and the same lit windows (see `app/environments/lighting.ts` and `app/lib/windows.ts`).
+
 ### Riding a dragon or a car
 
 The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom; once it moves and the mouse is left alone for 1.5 seconds, the camera eases back behind it. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
@@ -36,7 +40,7 @@ yarn ascii forest --seed 42
 yarn ascii --help       # every option
 ```
 
-`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `Tab` switches to the next environment, `R` switches between characters and blocks, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
 
 Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor. The status line says which one your terminal does. If input misbehaves, `--log-input FILE` records everything the terminal sends.
 

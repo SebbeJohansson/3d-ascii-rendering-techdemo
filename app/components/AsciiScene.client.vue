@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // No 3D engine here: the scene is ray traced on the CPU, one ray per character.
 import type { Environment } from '~/environments'
+import { lightingAt } from '~/environments/lighting'
 import { CAMERA_FOV, orbitView, panView, zoomView, type CameraView } from '~/lib/camera'
 import { hexToCss } from '~/lib/color'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
@@ -36,7 +37,9 @@ const emit = defineEmits<{
 
 const container = ref<HTMLDivElement>()
 const canvas = ref<HTMLCanvasElement>()
-const skyCss = computed(() => hexToCss(props.env.sky))
+const { time: timeOfDay } = useTimeOfDay()
+const lighting = computed(() => lightingAt(timeOfDay.value, props.env.sky))
+const skyCss = computed(() => hexToCss(lighting.value.sky))
 
 const view = useCameraView(props.env)
 const playerKind = usePlayerKind()
@@ -88,7 +91,7 @@ function onFrame(frame: TracedFrame) {
 function draw() {
   if (!ctx || !last) return
   const { env, color, cellBackground, atlas, stretch, outlines } = props
-  glyphs.draw(ctx, last, { sky: env.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar })
+  glyphs.draw(ctx, last, { sky: lighting.value.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar })
 }
 
 function resize() {
@@ -120,7 +123,7 @@ function tick() {
   // One frame in flight at a time. `dirty` stays set, so the next one goes out when it lands.
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
-  tracer.render(camera(), cols, rows, performance.now() / 1000, player())
+  tracer.render(camera(), cols, rows, performance.now() / 1000, player(), timeOfDay.value)
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
@@ -173,6 +176,7 @@ watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, prop
 watch(() => props.fontSize, resize)
 // The camera can also be moved from elsewhere (the 3D half of the split view).
 watch(view, () => (dirty = true))
+watch(timeOfDay, () => (dirty = true))
 watch(() => props.worker, startTracer)
 watch([playerKind, () => props.seed], () => {
   tracer?.setPlayer(playerKind.value, props.seed)

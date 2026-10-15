@@ -7,7 +7,8 @@ import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
 import type { EnvironmentScene } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
-import { buildRaycastPlayer, buildRaycastScene, placePlayer, renderScene, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { lightingAt, NOON } from '../environments/lighting'
+import { buildRaycastPlayer, buildRaycastScene, placePlayer, renderScene, setLighting, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -36,14 +37,21 @@ export interface Tracer {
   setScene: (envId: string, seed: number, size: number) => void
   /** Spawns a player (or removes it, with null). Its colors come from the seed. */
   setPlayer: (kind: PlayerKind | null, seed: number) => void
-  /** `time` (seconds) poses animated environments and players; `player` places the player. */
-  render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose) => void
+  /**
+   * `time` (seconds) poses animated environments and players; `player` places the player;
+   * `timeOfDay` (see lighting.ts) sets the light.
+   */
+  render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose, timeOfDay?: number) => void
   dispose: () => void
 }
 
-/** Poses an animated environment for this frame and updates the ray tracer's copy of it. */
-export function poseScene(envId: string, generated: EnvironmentScene, scene: RaycastScene, time: number) {
+/**
+ * Lights the scene for the time of day, and poses an animated environment for this frame and
+ * updates the ray tracer's copy of it.
+ */
+export function poseScene(envId: string, generated: EnvironmentScene, scene: RaycastScene, time: number, timeOfDay: number) {
   const env = getEnvironment(envId)
+  setLighting(scene, lightingAt(timeOfDay, env.sky))
   if (!env.animate) return
   env.animate(generated, time)
   updateMeshes(scene, generated)
@@ -99,9 +107,9 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
     setPlayer(kind, seed) {
       player.set(kind, seed)
     },
-    render(camera, cols, rows, time, pose) {
+    render(camera, cols, rows, time, pose, timeOfDay = NOON) {
       if (!scene || !generated) return
-      poseScene(currentEnv, generated, scene, time)
+      poseScene(currentEnv, generated, scene, time, timeOfDay)
       player.attach(scene, pose, time)
       const frame = emptyFrame(cols, rows)
       const start = performance.now()
@@ -182,7 +190,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     setPlayer(kind, seed) {
       for (const w of workers) post(w, { type: 'player', kind, seed })
     },
-    render(camera, cols, rows, time, player) {
+    render(camera, cols, rows, time, player, timeOfDay = NOON) {
       if (pending) return
       pending = workers.length
       frameStart = performance.now()
@@ -190,7 +198,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
       workers.forEach((w, k) => {
         const band = emptyFrame(cols, Math.max(0, Math.ceil((rows - k) / count)))
         const { ink, rgb, depths, normals } = band
-        post(w, { type: 'render', camera, time, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
+        post(w, { type: 'render', camera, time, timeOfDay, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
       })
     },
     dispose() {

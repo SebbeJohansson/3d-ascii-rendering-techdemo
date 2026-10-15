@@ -22,6 +22,8 @@ export interface Primitive {
   roughness?: number
   /** Defaults to 0. */
   metalness?: number
+  /** Gets rows of windows that light up at night (see lib/windows.ts). */
+  windows?: boolean
 }
 
 /**

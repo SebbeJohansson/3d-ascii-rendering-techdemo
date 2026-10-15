@@ -10,10 +10,11 @@
  */
 import type { Environment, EnvironmentScene, Mesh, Shape } from '../environments/types'
 import type { PlayerPose } from '../players/types'
-import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
+import { lightingAt, NOON, type Lighting } from '../environments/lighting'
 import { buildBvh, bvhHit, intersectBvh, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
-import { cameraBasis, normalize, scale, type Vec3 } from './math'
+import { cameraBasis, scale, type Vec3 } from './math'
+import { WINDOW_COLOR, WINDOW_GLOW, windowLit } from './windows'
 
 export interface RaycastScene {
   /** minX, minY, minZ, maxX, maxY, maxZ per primitive. */
@@ -21,8 +22,11 @@ export interface RaycastScene {
   shapes: Uint8Array
   /** Diffuse albedo per primitive: linear r, g, b in 0..1, already scaled by (1 - metalness). */
   colors: Float32Array
+  /** Which primitives have windows that light up at night. */
+  windows: Uint8Array
   ground: Vec3
-  sky: Vec3
+  /** The current time of day's light; see setLighting(). */
+  light: SceneLight
   fogNear: number
   fogFar: number
   half: number
@@ -47,6 +51,25 @@ export interface RaycastScene {
   }
   /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
   player?: RaycastPlayer
+}
+
+/** A Lighting, worked out into the terms the shading loop uses. */
+interface SceneLight {
+  /** Unit vector toward the sun (or moon). */
+  sun: Vec3
+  /** Irradiance from the sun (or moon) and the hemisphere light, linear rgb. */
+  sunLight: Vec3
+  hemiSky: Vec3
+  hemiGround: Vec3
+  /** Sky and fog color, linear rgb. */
+  sky: Vec3
+  /** Radiance of a lit window, linear rgb: 0 by day. */
+  windowGlow: Vec3
+  /** How much a lit window takes away from its cell's ink: 0 by day, up to 1 at night. */
+  night: number
+  /** The most and least light a surface can get, for scaling ink. */
+  maxLight: number
+  minLight: number
 }
 
 /** A player's mesh in its own space, and where it currently is. */
@@ -85,22 +108,35 @@ const MISS = -2
 const MESH = -3
 const PLAYER = -4
 
-// Shading follows three's MeshStandardMaterial so both views match: colors are converted to
-// linear light, lit with Lambert diffuse (albedo / π × irradiance) from the sun plus a hemisphere
-// light, fogged, and converted back to sRGB. Specular is left out; at high roughness it is small.
-const SUN = normalize(SUN_POSITION)
-const SUN_LIGHT = scale(linearRgb(SUN_COLOR), SUN_INTENSITY / Math.PI)
-const HEMI_SKY = scale(linearRgb(HEMI_SKY_COLOR), HEMI_INTENSITY / Math.PI)
-const HEMI_GROUND = scale(linearRgb(HEMI_GROUND_COLOR), HEMI_INTENSITY / Math.PI)
-
 // Ink comes from how much light reaches a surface, not from its color: dark materials (pines)
 // and light ones get the same range of characters, and density shows lit vs shadowed sides.
 const luminance = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b
-// Brightest: facing straight up into the sun. Darkest: facing down, lit by the ground only.
-const MAX_LIGHT = luminance(...HEMI_SKY) + luminance(...SUN_LIGHT)
-const MIN_LIGHT = luminance(...HEMI_GROUND)
 // Even fully lit surfaces get a light character, so they don't vanish into the sky.
 const MIN_INK = 0.25
+
+/**
+ * Sets the time of day's light for the next renderScene(). Shading follows three's
+ * MeshStandardMaterial so both views match: colors are converted to linear light, lit with
+ * Lambert diffuse (albedo / π × irradiance) from the sun plus a hemisphere light, fogged, and
+ * converted back to sRGB. Specular is left out; at high roughness it is small.
+ */
+export function setLighting(s: RaycastScene, lighting: Lighting) {
+  const sunLight = scale(linearRgb(lighting.color), lighting.intensity / Math.PI)
+  const hemiSky = scale(linearRgb(lighting.hemiSky), lighting.hemiIntensity / Math.PI)
+  const hemiGround = scale(linearRgb(lighting.hemiGround), lighting.hemiIntensity / Math.PI)
+  s.light = {
+    sun: lighting.direction,
+    sunLight,
+    hemiSky,
+    hemiGround,
+    sky: linearRgb(lighting.sky),
+    windowGlow: scale(linearRgb(WINDOW_COLOR), WINDOW_GLOW * lighting.night),
+    night: lighting.night,
+    // Brightest: facing straight up into the sun. Darkest: facing down, lit by the ground only.
+    maxLight: luminance(...hemiSky) + luminance(...sunLight),
+    minLight: luminance(...hemiGround),
+  }
+}
 
 export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene): RaycastScene {
   const half = extent / 2
@@ -108,12 +144,14 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
   const bounds = new Float32Array(count * 6)
   const shapes = new Uint8Array(count)
   const colors = new Float32Array(count * 3)
+  const windows = new Uint8Array(count)
   let maxHeight = 1
 
   primitives.forEach((p, i) => {
     bounds.set([p.x - p.width / 2, p.y, p.z - p.depth / 2, p.x + p.width / 2, p.y + p.height, p.z + p.depth / 2], i * 6)
     shapes[i] = SHAPE_CODES[p.shape]
     colors.set(scale(linearRgb(p.color), 1 - (p.metalness ?? 0)), i * 3)
+    windows[i] = p.windows ? 1 : 0
     maxHeight = Math.max(maxHeight, p.y + p.height)
   })
 
@@ -157,12 +195,13 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
   const primitivesHeight = maxHeight
   if (mesh) maxHeight = Math.max(maxHeight, mesh.bvh.bounds[4]!)
 
-  return {
+  const scene: RaycastScene = {
     bounds,
     shapes,
     colors,
+    windows,
     ground: linearRgb(env.ground),
-    sky: linearRgb(env.sky),
+    light: undefined!,
     fogNear: env.fogNear,
     fogFar: env.fogFar,
     half,
@@ -176,6 +215,8 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     rayId: 0,
     mesh,
   }
+  setLighting(scene, lightingAt(NOON, env.sky))
+  return scene
 }
 
 /**
@@ -559,7 +600,8 @@ export function renderScene(
   const { forward: f, right: r, up: u } = cameraBasis(cam.position, cam.target)
   const tanHalf = Math.tan((cam.fov * Math.PI) / 360)
   const [ox, oy, oz] = cam.position
-  const { sky, ground, colors, fogNear, fogFar } = s
+  const { ground, colors, windows, fogNear, fogFar } = s
+  const { sun, sunLight, hemiSky, hemiGround, sky, windowGlow, night, maxLight, minLight } = s.light
 
   for (let y = rowStart, row = 0; y < rows; y += rowStep, row++) {
     const sy = (1 - ((y + 0.5) / rows) * 2) * tanHalf
@@ -586,6 +628,10 @@ export function renderScene(
       let br: number
       let bg: number
       let bb: number
+      // Light the surface gives off itself: lit windows at night.
+      let er = 0
+      let eg = 0
+      let eb = 0
       if (prim === MESH || prim === PLAYER) {
         // Blend the triangle's three vertex normals and colors by where the ray hit it,
         // which makes the faceted mesh look smooth.
@@ -626,25 +672,34 @@ export function renderScene(
         br = colors[prim * 3]!
         bg = colors[prim * 3 + 1]!
         bb = colors[prim * 3 + 2]!
+        // Walls only: boxes get exact axis normals, so ny is 0 on every side.
+        if (night && windows[prim] && ny === 0) {
+          const face = nx > 0 ? 0 : nx < 0 ? 1 : nz > 0 ? 2 : 3
+          if (windowLit(face, nx ? oz + dz * t : ox + dx * t, oy + dy * t)) {
+            er = windowGlow[0]
+            eg = windowGlow[1]
+            eb = windowGlow[2]
+          }
+        }
       }
 
       // Hemisphere light: blend of ground and sky color by how much the surface points up.
       const w = ny * 0.5 + 0.5
-      let lr = HEMI_GROUND[0] + (HEMI_SKY[0] - HEMI_GROUND[0]) * w
-      let lg = HEMI_GROUND[1] + (HEMI_SKY[1] - HEMI_GROUND[1]) * w
-      let lb = HEMI_GROUND[2] + (HEMI_SKY[2] - HEMI_GROUND[2]) * w
+      let lr = hemiGround[0] + (hemiSky[0] - hemiGround[0]) * w
+      let lg = hemiGround[1] + (hemiSky[1] - hemiGround[1]) * w
+      let lb = hemiGround[2] + (hemiSky[2] - hemiGround[2]) * w
 
       // Sun light, blocked if a shadow ray toward the sun hits anything.
-      const facing = nx * SUN[0] + ny * SUN[1] + nz * SUN[2]
+      const facing = nx * sun[0] + ny * sun[1] + nz * sun[2]
       if (facing > 0) {
         // Start the shadow ray slightly off the surface so it doesn't hit its own surface.
         const px = ox + dx * t + nx * 0.05
         const py = oy + dy * t + ny * 0.05
         const pz = oz + dz * t + nz * 0.05
-        if (!trace(s, px, py, pz, SUN[0], SUN[1], SUN[2], true)) {
-          lr += SUN_LIGHT[0] * facing
-          lg += SUN_LIGHT[1] * facing
-          lb += SUN_LIGHT[2] * facing
+        if (!trace(s, px, py, pz, sun[0], sun[1], sun[2], true)) {
+          lr += sunLight[0] * facing
+          lg += sunLight[1] * facing
+          lb += sunLight[2] * facing
         }
       }
 
@@ -652,13 +707,14 @@ export function renderScene(
       const depth = t * (dx * f[0] + dy * f[1] + dz * f[2])
       const fogT = Math.min(1, Math.max(0, (depth - fogNear) / (fogFar - fogNear)))
       const fog = fogT * fogT * (3 - 2 * fogT)
-      const cr = linearToSrgbByte(br * lr * (1 - fog) + sky[0] * fog)
-      const cg = linearToSrgbByte(bg * lg * (1 - fog) + sky[1] * fog)
-      const cb = linearToSrgbByte(bb * lb * (1 - fog) + sky[2] * fog)
+      const cr = linearToSrgbByte((br * lr + er) * (1 - fog) + sky[0] * fog)
+      const cg = linearToSrgbByte((bg * lg + eg) * (1 - fog) + sky[1] * fog)
+      const cb = linearToSrgbByte((bb * lb + eb) * (1 - fog) + sky[2] * fog)
       rgb[i * 3] = cr
       rgb[i * 3 + 1] = cg
       rgb[i * 3 + 2] = cb
-      const shadow = Math.min(1, Math.max(0, (MAX_LIGHT - luminance(lr, lg, lb)) / (MAX_LIGHT - MIN_LIGHT)))
+      // A lit window is as bright as it gets: the lightest characters.
+      const shadow = er ? 1 - night : Math.min(1, Math.max(0, (maxLight - luminance(lr, lg, lb)) / (maxLight - minLight)))
       ink[i] = (MIN_INK + (1 - MIN_INK) * shadow) * (1 - fog) * 255
       depths[i] = depth
       normals[i * 3] = nx * 127

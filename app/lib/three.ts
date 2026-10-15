@@ -1,11 +1,13 @@
 import * as THREE from 'three/webgpu'
+import { abs, color, float, floor, fract, normalWorld, positionWorld, select, step, uniform } from 'three/tsl'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Ref } from 'vue'
 import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
-import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
+import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, lightingAt, NOON, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { CAMERA_FOV, MAX_DISTANCE, MAX_POLAR_ANGLE, MIN_DISTANCE, type CameraView } from './camera'
 import type { Vec3 } from './math'
+import { FLOOR_HEIGHT, GLASS_X, GLASS_Y, HASH_COLUMN, HASH_FACE, HASH_ROW, LIT_SHARE, WINDOW_COLOR, WINDOW_GLOW, WINDOW_SPACING } from './windows'
 
 /**
  * Unit shapes with their base at y = 0, scaled per instance to each primitive's
@@ -16,6 +18,33 @@ const UNIT_GEOMETRY: Record<Shape, () => THREE.BufferGeometry> = {
   cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0),
   cone: () => new THREE.ConeGeometry(0.5, 1, 12).translate(0, 0.5, 0),
   sphere: () => new THREE.SphereGeometry(0.5, 16, 12).translate(0, 0.5, 0),
+}
+
+/**
+ * Glow of lit windows, for a material's emissiveNode: the same steps as windowLit() in
+ * lib/windows.ts, per pixel. `night` (0..1) dims it to nothing by day.
+ */
+function windowGlow(night: THREE.UniformNode<'float', number>) {
+  const facesX = abs(normalWorld.x).greaterThan(0.5)
+  // Position along the wall, and which way the wall faces: 0..3 for +x, -x, +z, -z.
+  const u = select(facesX, positionWorld.z, positionWorld.x)
+  const face = select(facesX, select(normalWorld.x.greaterThan(0), float(0), float(1)), select(normalWorld.z.greaterThan(0), float(2), float(3)))
+  const fy = positionWorld.y.div(FLOOR_HEIGHT)
+  const row = floor(fy)
+  const gy = fy.sub(row)
+  const fx = u.div(WINDOW_SPACING)
+  const column = floor(fx)
+  const gx = fx.sub(column)
+  const glass = step(GLASS_X[0], gx).mul(step(gx, GLASS_X[1])).mul(step(GLASS_Y[0], gy)).mul(step(gy, GLASS_Y[1]))
+  // windowHash(), in the shader's own 32-bit floats.
+  const n = row.mul(HASH_ROW).add(column.mul(HASH_COLUMN)).add(face.mul(HASH_FACE))
+  const p1 = fract(n.mul(0.1031))
+  const p2 = p1.mul(p1.add(33.33))
+  const p3 = p2.mul(p2.add(p2))
+  const lit = step(fract(p3), LIT_SHARE)
+  // Walls only, not roofs.
+  const wall = step(abs(normalWorld.y), 0.5)
+  return color(WINDOW_COLOR).mul(glass.mul(lit).mul(wall).mul(night).mul(WINDOW_GLOW))
 }
 
 /** A shadow-casting three mesh for one of our triangle meshes. */
@@ -46,7 +75,8 @@ export function createEnvironmentScene() {
   const content = new THREE.Group()
   scene.add(content)
 
-  scene.add(new THREE.HemisphereLight(HEMI_SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY))
+  const hemi = new THREE.HemisphereLight(HEMI_SKY_COLOR, HEMI_GROUND_COLOR, HEMI_INTENSITY)
+  scene.add(hemi)
   const sun = new THREE.DirectionalLight(SUN_COLOR, SUN_INTENSITY)
   sun.position.set(...SUN_POSITION)
   sun.castShadow = true
@@ -57,6 +87,9 @@ export function createEnvironmentScene() {
   s.right = s.top = 600
   s.far = 2000
   scene.add(sun)
+  const sunDistance = Math.hypot(...SUN_POSITION)
+  const night = uniform(0)
+  let timeOfDay = NOON
 
   function clear() {
     for (const child of content.children) {
@@ -80,6 +113,7 @@ export function createEnvironmentScene() {
 
     scene.background = new THREE.Color(env.sky)
     scene.fog = new THREE.Fog(env.sky, env.fogNear, env.fogFar)
+    applyLighting()
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(extent, extent).rotateX(-Math.PI / 2),
@@ -91,7 +125,7 @@ export function createEnvironmentScene() {
     // One instanced mesh (one draw call) per shape + material combination.
     const groups = new Map<string, Primitive[]>()
     for (const p of primitives) {
-      const key = `${p.shape}|${p.roughness ?? 1}|${p.metalness ?? 0}`
+      const key = `${p.shape}|${p.roughness ?? 1}|${p.metalness ?? 0}|${!!p.windows}`
       const group = groups.get(key)
       if (group) group.push(p)
       else groups.set(key, [p])
@@ -99,12 +133,10 @@ export function createEnvironmentScene() {
     const m = new THREE.Matrix4()
     const color = new THREE.Color()
     for (const group of groups.values()) {
-      const { shape, roughness = 1, metalness = 0 } = group[0]!
-      const mesh = new THREE.InstancedMesh(
-        UNIT_GEOMETRY[shape](),
-        new THREE.MeshStandardMaterial({ roughness, metalness }),
-        group.length,
-      )
+      const { shape, roughness = 1, metalness = 0, windows } = group[0]!
+      const material = new THREE.MeshStandardMaterial({ roughness, metalness })
+      if (windows) material.emissiveNode = windowGlow(night)
+      const mesh = new THREE.InstancedMesh(UNIT_GEOMETRY[shape](), material, group.length)
       mesh.castShadow = true
       mesh.receiveShadow = true
       group.forEach((p, i) => {
@@ -123,6 +155,27 @@ export function createEnvironmentScene() {
       current.geometries.push(mesh.geometry)
     }
     return summary
+  }
+
+  /** Lights the scene for the time of day (see lighting.ts). */
+  function applyLighting() {
+    if (!current) return
+    const light = lightingAt(timeOfDay, current.env.sky)
+    sun.position.set(...(light.direction.map(v => v * sunDistance) as Vec3))
+    sun.color.setHex(light.color)
+    sun.intensity = light.intensity
+    hemi.color.setHex(light.hemiSky)
+    hemi.groundColor.setHex(light.hemiGround)
+    hemi.intensity = light.hemiIntensity
+    ;(scene.background as THREE.Color).setHex(light.sky)
+    ;(scene.fog as THREE.Fog).color.setHex(light.sky)
+    night.value = light.night
+  }
+
+  function setTimeOfDay(t: number) {
+    if (t === timeOfDay) return
+    timeOfDay = t
+    applyLighting()
   }
 
   /** Poses an animated environment for `time` (seconds) and uploads the moved vertices. */
@@ -176,7 +229,7 @@ export function createEnvironmentScene() {
     setPlayer(null, 0)
   }
 
-  return { scene, camera, build, animate, setPlayer, placePlayer, dispose }
+  return { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, dispose }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

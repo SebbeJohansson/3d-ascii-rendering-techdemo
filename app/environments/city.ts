@@ -79,6 +79,7 @@ export const city: Environment = {
               color: pick(rand, BUILDING_PALETTE),
               roughness: 0.8,
               metalness: 0.1,
+              windows: true,
             })
             buildings++
           }

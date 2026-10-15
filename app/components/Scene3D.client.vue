@@ -47,7 +47,9 @@ function onWheel(e: WheelEvent) {
   chaseCamera.zoom(e.deltaY)
 }
 
-const { scene, camera, build, animate, setPlayer, placePlayer, dispose } = createEnvironmentScene()
+const { time: timeOfDay } = useTimeOfDay()
+
+const { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
@@ -93,6 +95,7 @@ onMounted(async () => {
     const start = performance.now()
     animate(start / 1000)
     placePlayer(playerPose.value, start / 1000)
+    setTimeOfDay(timeOfDay.value)
     // Orbit controls would pull the chase camera out to their minimum distance.
     if (!following.value) controls!.update()
     renderer!.render(scene, camera)
