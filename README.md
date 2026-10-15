@@ -19,6 +19,7 @@ You can look at each environment three ways:
 - `/city` is a regular 3D view using three.js and its WebGPU renderer (it falls back to WebGL2).
 - `/city/ascii` is the ray-traced ASCII view. Every character cell shoots one ray into the scene, the lighting decides which character it gets, and edges are drawn with `| / \ - _` so silhouettes look like line art.
 - `/city/split` shows both next to each other with the cameras synced.
+- `/city/lens` shows the 3D view with the ASCII view on top, but only inside a lens: a circle around the mouse, a bubble around what the camera looks at (it follows the dragon or car when riding), or behind a line sweeping across the view. Both views use the same camera, so the characters sit exactly over what they show.
 
 Swap `city` for `forest` or `dragon` to change scene.
 

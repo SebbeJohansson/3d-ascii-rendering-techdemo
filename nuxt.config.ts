@@ -17,7 +17,7 @@ export default defineNuxtConfig({
   nitro: {
     // Static hosts like GitHub Pages need a real file for every deep link.
     prerender: {
-      routes: envIds.flatMap(id => [`/${id}`, `/${id}/ascii`, `/${id}/split`]),
+      routes: envIds.flatMap(id => [`/${id}`, `/${id}/ascii`, `/${id}/split`, `/${id}/lens`]),
     },
   },
 })

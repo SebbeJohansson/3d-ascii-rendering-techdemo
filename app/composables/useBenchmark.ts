@@ -3,7 +3,7 @@ import { DEFAULT_VIEW, type CameraView } from '~/lib/camera'
 import type { FramePerf } from '~/lib/frameMeter'
 import type { Vec3 } from '~/lib/math'
 
-export type ViewMode = '3d' | 'ascii' | 'split'
+export type ViewMode = '3d' | 'ascii' | 'split' | 'lens'
 type BenchmarkView = '3d' | 'ascii'
 
 /** Seconds per view. The first WARMUP seconds (shader compiles, first trace) aren't counted. */

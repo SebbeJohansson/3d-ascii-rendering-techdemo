@@ -6,6 +6,7 @@ import { CAMERA_FOV, orbitView, panView, zoomView, type CameraView } from '~/lib
 import { hexToCss } from '~/lib/color'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createGlyphRenderer } from '~/lib/glyphRenderer'
+import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
 import { createMainThreadTracer, createWorkerTracer, type TracedFrame, type Tracer } from '~/lib/tracers'
@@ -27,6 +28,11 @@ const props = defineProps<{
   worker: boolean
   /** Character height in CSS pixels. Smaller characters mean more cells and more detail. */
   fontSize: number
+  /**
+   * Show only the cells inside this lens, over a transparent background, to sit on top of
+   * the 3D view. Mouse input then goes to whatever is underneath.
+   */
+  lens?: Lens
 }>()
 
 const emit = defineEmits<{
@@ -58,6 +64,12 @@ let width = 0
 let height = 0
 /** Last traced frame, kept so style toggles can redraw without tracing again. */
 let last: TracedFrame | undefined
+/** The camera of the frame being traced, then of `last`: the lens needs it to place cells. */
+let tracing: Camera | undefined
+let lastCamera: Camera | undefined
+let cellWidth = 0
+let cellHeight = 0
+let mask = new Uint8Array(0)
 
 function startTracer() {
   tracer?.dispose()
@@ -82,6 +94,7 @@ function onFrame(frame: TracedFrame) {
     return
   }
   last = frame
+  lastCamera = tracing
   const start = performance.now()
   draw()
   const drawMs = performance.now() - start
@@ -90,15 +103,19 @@ function onFrame(frame: TracedFrame) {
 
 function draw() {
   if (!ctx || !last) return
-  const { env, color, cellBackground, atlas, stretch, outlines } = props
-  glyphs.draw(ctx, last, { sky: lighting.value.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar })
+  const { env, color, cellBackground, atlas, stretch, outlines, lens } = props
+  if (lens && lastCamera) {
+    if (mask.length !== cols * rows) mask = new Uint8Array(cols * rows)
+    lensMask(lens, lastCamera, last.depths, cols, rows, cellWidth, cellHeight, mask)
+  }
+  glyphs.draw(ctx, last, { sky: lighting.value.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar, mask: lens && mask })
 }
 
 function resize() {
   if (!container.value || !canvas.value || !ctx) return
   width = container.value.clientWidth
   height = container.value.clientHeight
-  ;({ cols, rows } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize))
+  ;({ cols, rows, cellWidth, cellHeight } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize))
   emit('grid', { cols, rows })
   dirty = true
 }
@@ -123,7 +140,8 @@ function tick() {
   // One frame in flight at a time. `dirty` stays set, so the next one goes out when it lands.
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
-  tracer.render(camera(), cols, rows, performance.now() / 1000, player(), timeOfDay.value)
+  tracing = camera()
+  tracer.render(tracing, cols, rows, performance.now() / 1000, player(), timeOfDay.value)
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
@@ -177,6 +195,8 @@ watch(() => props.fontSize, resize)
 // The camera can also be moved from elsewhere (the 3D half of the split view).
 watch(view, () => (dirty = true))
 watch(timeOfDay, () => (dirty = true))
+// The lens moves without the scene changing: redraw the last frame, no new trace needed.
+watch(() => props.lens, draw, { deep: true })
 watch(() => props.worker, startTracer)
 watch([playerKind, () => props.seed], () => {
   tracer?.setPlayer(playerKind.value, props.seed)
@@ -191,7 +211,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="container" class="scene">
+  <div ref="container" class="scene" :class="{ overlay: lens }">
     <canvas
       ref="canvas"
       @pointerdown="onPointerDown"
@@ -209,6 +229,11 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   background: v-bind(skyCss);
+}
+
+.overlay {
+  background: none;
+  pointer-events: none;
 }
 
 canvas {

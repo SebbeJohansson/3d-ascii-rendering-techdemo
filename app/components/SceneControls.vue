@@ -44,6 +44,9 @@ function randomize() {
       <NuxtLink :to="viewPath(env.id, 'split')" :class="{ active: mode === 'split' }">
         Split
       </NuxtLink>
+      <NuxtLink :to="viewPath(env.id, 'lens')" :class="{ active: mode === 'lens' }">
+        Lens
+      </NuxtLink>
     </nav>
     <nav>
       <button type="button" :class="{ active: !playerKind }" @click="playerKind = null">
@@ -144,7 +147,8 @@ function randomize() {
   box-shadow: 0 4px 20px rgb(0 0 0 / 0.15);
 }
 
-nav {
+/* :deep so settings components in the slot (LensSettings) get the same tabs. */
+.panel :deep(nav) {
   display: flex;
   gap: 4px;
   padding: 3px;
@@ -152,8 +156,8 @@ nav {
   border-radius: 7px;
 }
 
-nav a,
-nav button {
+.panel :deep(nav a),
+.panel :deep(nav button) {
   flex: 1;
   padding: 5px;
   border: 0;
@@ -168,7 +172,7 @@ nav button {
   text-decoration: none;
 }
 
-nav .active {
+.panel :deep(nav .active) {
   background: white;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
 }

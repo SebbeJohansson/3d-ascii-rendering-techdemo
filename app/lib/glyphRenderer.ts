@@ -20,6 +20,12 @@ export interface DrawOptions extends StyleOptions {
   sky: number
   /** Use the glyph atlas instead of fillText. */
   atlas: boolean
+  /**
+   * One byte per cell: draw only the cells set to 1 and leave the rest of the canvas
+   * transparent, so whatever is behind it shows through (the ASCII lens). Without it, every
+   * cell is drawn on the sky.
+   */
+  mask?: Uint8Array
 }
 
 // At this character size and up, glyphs get the full shade. Smaller characters can't be
@@ -86,7 +92,8 @@ export function createGlyphRenderer() {
     edges = new Uint8Array(cols * rows)
     edgeStrength = new Float32Array(cols * rows)
 
-    return { cols, rows }
+    // Cell size in CSS pixels, for mapping screen positions to cells.
+    return { cols, rows, cellWidth: charWidth, cellHeight: lineHeight }
   }
 
   function draw(ctx: CanvasRenderingContext2D, cells: Cells, options: DrawOptions) {
@@ -99,10 +106,15 @@ export function createGlyphRenderer() {
   function drawWithFillText(ctx: CanvasRenderingContext2D, rgb: Uint8Array, options: DrawOptions) {
     const { sky, color, cellBackground } = options
     const backgrounds = color && cellBackground
+    const { mask } = options
     const skyBytes = hexToBytes(sky)
+    const skyCss = hexToCss(sky)
     const c = new Uint8Array(6)
-    ctx.fillStyle = hexToCss(sky)
-    ctx.fillRect(0, 0, width, height)
+    if (mask) ctx.clearRect(0, 0, width, height)
+    else {
+      ctx.fillStyle = skyCss
+      ctx.fillRect(0, 0, width, height)
+    }
     if (!color) ctx.fillStyle = MONO_CSS
 
     let lastStyle = ''
@@ -110,6 +122,16 @@ export function createGlyphRenderer() {
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
         const g = glyphs[i]!
+        if (mask) {
+          if (!mask[i]) continue
+          // The canvas starts out transparent: give the cell its sky first.
+          if (!backgrounds || g === 0) {
+            ctx.fillStyle = skyCss
+            ctx.fillRect(x * charWidth, y * lineHeight, charWidth, lineHeight)
+            lastStyle = ''
+            if (!color) ctx.fillStyle = MONO_CSS
+          }
+        }
         if (g === 0) continue
         const edge = edgeStrength[i]!
 
@@ -139,6 +161,7 @@ export function createGlyphRenderer() {
     // Everything the hot loop touches is a local: closure variables per pixel are measurably
     // slower than locals at 100k+ cells.
     const backgrounds = options.color && options.cellBackground
+    const { mask } = options
     const cellGlyphs = glyphs
     const cellEdges = edgeStrength
     const skyBytes = hexToBytes(options.sky)
@@ -152,7 +175,9 @@ export function createGlyphRenderer() {
     const gh = cellH
     const strength = shade
     // ImageData is RGBA in memory, so a little-endian Uint32 pixel is 0xAABBGGRR.
-    px.fill(0xFF000000 | (skyB << 16) | (skyG << 8) | skyR)
+    const skyPixel = 0xFF000000 | (skyB << 16) | (skyG << 8) | skyR
+    // With a mask, start transparent: only the masked-in cells get drawn.
+    px.fill(mask ? 0 : skyPixel)
 
     for (let y = 0; y < rows; y++) {
       const oy = y * gh
@@ -160,7 +185,15 @@ export function createGlyphRenderer() {
       for (let x = 0; x < cols; x++) {
         const i = y * cols + x
         const g = cellGlyphs[i]!
-        if (g === 0) continue
+        if (mask && !mask[i]) continue
+        if (g === 0) {
+          // Sky. Already there without a mask; with one, fill the cell.
+          if (mask) {
+            const w = Math.min(gw, frameW - x * gw)
+            for (let yy = 0; yy < h; yy++) px.fill(skyPixel, (oy + yy) * frameW + x * gw, (oy + yy) * frameW + x * gw + w)
+          }
+          continue
+        }
         const edge = cellEdges[i]!
 
         // Background and foreground of this cell. Without cell backgrounds the glyph sits on the sky.
@@ -180,7 +213,7 @@ export function createGlyphRenderer() {
           for (let xx = 0; xx < w; xx++) {
             const a = alpha[src + xx]!
             // Blend by glyph coverage: background + (foreground - background) * coverage.
-            if (a || backgrounds) {
+            if (a || backgrounds || mask) {
               px[dst + xx] = 0xFF000000
                 | ((bgB + (((fgB - bgB) * a) >> 8)) << 16)
                 | ((bgG + (((fgG - bgG) * a) >> 8)) << 8)
