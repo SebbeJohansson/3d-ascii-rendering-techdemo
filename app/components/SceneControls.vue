@@ -136,6 +136,10 @@ function randomize() {
   position: absolute;
   top: 16px;
   left: 16px;
+  /* Scrolls when the settings don't fit, e.g. the lens view's on a short window. */
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 10px;
