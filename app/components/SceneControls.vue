@@ -58,6 +58,9 @@ function viewPath(envId: string, mode: ViewMode) {
       </template>
       · drag to look · scroll to zoom
     </p>
+    <p v-else class="keys">
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom
+    </p>
     <label>
       Seed
       <input v-model.number="seed" type="number">
