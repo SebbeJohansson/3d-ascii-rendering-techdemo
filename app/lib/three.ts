@@ -236,23 +236,28 @@ export function backendName(renderer: THREE.WebGPURenderer) {
   return (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'WebGPU' : 'WebGL2'
 }
 
-let sharedRenderer: Promise<THREE.WebGPURenderer> | undefined
+const sharedRenderers = new Map<string, Promise<THREE.WebGPURenderer>>()
 
 /**
- * One renderer for the whole session, reused across page visits. Disposing it destroys
- * the GPU device while three still has pipeline error checks pending, which then fail
- * with "Instance dropped in popErrorScope".
+ * One renderer per name for the whole session, reused across page visits: '3d' for the 3D
+ * view, others for views that need their own canvas next to it. Disposing a renderer destroys
+ * the GPU device while three still has pipeline error checks pending, which then fail with
+ * "Instance dropped in popErrorScope".
  */
-export function getSharedRenderer() {
-  sharedRenderer ??= (async () => {
-    const renderer = new THREE.WebGPURenderer({ antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFShadowMap
-    await renderer.init()
-    return renderer
-  })()
-  return sharedRenderer
+export function getSharedRenderer(name = '3d') {
+  let renderer = sharedRenderers.get(name)
+  if (!renderer) {
+    renderer = (async () => {
+      const r = new THREE.WebGPURenderer({ antialias: true })
+      r.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      r.shadowMap.enabled = true
+      r.shadowMap.type = THREE.PCFShadowMap
+      await r.init()
+      return r
+    })()
+    sharedRenderers.set(name, renderer)
+  }
+  return renderer
 }
 
 /** Orbit controls that start from, and keep writing to, a shared camera view. */

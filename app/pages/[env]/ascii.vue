@@ -12,7 +12,6 @@ const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
 usePlayerDriver(env.value)
 useDayCycle()
-const ascii = reactive(useAsciiSettings())
 const stats = ref<string>()
 const perf = ref<FramePerf>()
 useBenchmarkRun(env.value, 'ascii', perf, stats)
@@ -21,11 +20,10 @@ const grid = ref<{ cols: number, rows: number }>()
 
 <template>
   <div class="page">
-    <AsciiScene
+    <AsciiView
       :env="env"
       :seed="seed"
       :size="size"
-      v-bind="ascii"
       @grid="grid = $event"
       @stats="stats = $event"
       @perf="perf = $event"

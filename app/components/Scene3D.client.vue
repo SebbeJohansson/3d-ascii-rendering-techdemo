@@ -2,18 +2,26 @@
 import type * as THREE from 'three/webgpu'
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Environment } from '~/environments'
+import { lightingAt } from '~/environments/lighting'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
+import { createShaderAscii } from '~/lib/gpu/shaderAscii'
 import { backendName, createEnvironmentScene, createOrbitControls, getSharedRenderer } from '~/lib/three'
 
 const props = defineProps<{
   env: Environment
   seed: number
   size: number
+  /**
+   * Draw the view as ASCII with a post-processing shader instead (see lib/gpu/shaderAscii.ts),
+   * on a canvas of its own so it can sit next to the plain 3D view.
+   */
+  ascii?: { fontSize: number, color: boolean, cellBackground: boolean }
 }>()
 
 const emit = defineEmits<{
   stats: [stats: string]
   perf: [perf: FramePerf]
+  grid: [grid: { cols: number, rows: number }]
 }>()
 
 const container = ref<HTMLDivElement>()
@@ -51,6 +59,7 @@ const { time: timeOfDay } = useTimeOfDay()
 
 const { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
+let shaderAscii: ReturnType<typeof createShaderAscii> | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
 let unmounted = false
@@ -58,7 +67,7 @@ const meter = createFrameMeter(perf => emit('perf', perf))
 
 function rebuild() {
   const summary = build(props.env, props.seed, props.size)
-  emit('stats', `${summary} · ${renderer ? backendName(renderer) : ''}`)
+  emit('stats', `${summary} · ${props.ascii ? 'shader ASCII · ' : ''}${renderer ? backendName(renderer) : ''}`)
 }
 
 function resize() {
@@ -67,16 +76,27 @@ function resize() {
   renderer.setSize(w, h)
   camera.aspect = w / h
   camera.updateProjectionMatrix()
+  if (shaderAscii && props.ascii) {
+    // The same character cell as the ray-traced ASCII view's: an 'M' wide, 7/6 of the font tall.
+    const { fontSize } = props.ascii
+    const measure = document.createElement('canvas').getContext('2d')!
+    measure.font = `${fontSize}px ui-monospace, Menlo, Consolas, monospace`
+    const cellWidth = measure.measureText('M').width
+    const cellHeight = (fontSize * 7) / 6
+    shaderAscii.setCellSize(cellWidth, cellHeight)
+    emit('grid', { cols: Math.floor(w / cellWidth), rows: Math.floor(h / cellHeight) })
+  }
 }
 
 onMounted(async () => {
   // .client components render their template after mount; wait for the refs to exist.
   await nextTick()
-  const gpu = await getSharedRenderer()
+  const gpu = await getSharedRenderer(props.ascii ? 'shader-ascii' : '3d')
   // Navigated away (or hot-reloaded) while the GPU was starting up.
   if (unmounted) return
   renderer = gpu
   container.value!.appendChild(renderer.domElement)
+  if (props.ascii) shaderAscii = createShaderAscii(renderer, scene, camera)
 
   controls = createOrbitControls(camera, renderer.domElement, view)
   controls.enabled = !following.value
@@ -98,13 +118,19 @@ onMounted(async () => {
     setTimeOfDay(timeOfDay.value)
     // Orbit controls would pull the chase camera out to their minimum distance.
     if (!following.value) controls!.update()
-    renderer!.render(scene, camera)
+    if (shaderAscii && props.ascii) {
+      const { color, cellBackground } = props.ascii
+      shaderAscii.setStyle({ sky: lightingAt(timeOfDay.value, props.env.sky).sky, color, cellBackground })
+      shaderAscii.pipeline.render()
+    }
+    else renderer!.render(scene, camera)
     meter.frame(performance.now() - start)
     meter.tick()
   })
 })
 
 watch(() => [props.env, props.seed, props.size], rebuild)
+watch(() => props.ascii?.fontSize, resize)
 watch([playerKind, () => props.seed], ([kind, seed]) => setPlayer(kind, seed), { immediate: true })
 watch(following, (on) => {
   if (controls) controls.enabled = !on
@@ -143,6 +169,7 @@ onBeforeUnmount(() => {
   controls?.dispose()
   // Keep the shared renderer alive for the next visit; only detach its canvas.
   renderer?.domElement.remove()
+  shaderAscii?.dispose()
   dispose()
 })
 </script>

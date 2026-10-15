@@ -14,7 +14,6 @@ const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
 usePlayerDriver(env.value)
 useDayCycle()
-const ascii = reactive(useAsciiSettings())
 const stats = ref<string>()
 const perf = ref<FramePerf>()
 const grid = ref<{ cols: number, rows: number }>()
@@ -32,18 +31,17 @@ function onPointerMove(e: PointerEvent) {
 <template>
   <div ref="page" class="page" @pointermove="onPointerMove" @pointerleave="pointer = null">
     <Scene3D :env="env" :seed="seed" :size="size" @stats="stats = $event" />
-    <AsciiScene
+    <AsciiView
       :env="env"
       :seed="seed"
       :size="size"
-      v-bind="ascii"
       :lens="lens"
       @grid="grid = $event"
       @perf="perf = $event"
     />
     <SceneControls :env="env" mode="lens" :stats="stats?.split(' · ').slice(0, -1).join(' · ')" :perf="perf">
       <LensSettings />
-      <AsciiSettings :grid="grid" />
+      <AsciiSettings :grid="grid" lens />
     </SceneControls>
   </div>
 </template>

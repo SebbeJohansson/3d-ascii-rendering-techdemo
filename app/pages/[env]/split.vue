@@ -14,7 +14,6 @@ const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
 usePlayerDriver(env.value)
 useDayCycle()
-const ascii = reactive(useAsciiSettings())
 const stats3d = ref<string>()
 const statsAscii = ref<string>()
 const perf3d = ref<FramePerf>()
@@ -33,11 +32,10 @@ const fps = (perf?: FramePerf) => (perf ? (perf.fps >= 1 ? `${Math.round(perf.fp
       <span class="label">3D · {{ lastPart(stats3d) }} · {{ fps(perf3d) }}</span>
     </section>
     <section>
-      <AsciiScene
+      <AsciiView
         :env="env"
         :seed="seed"
         :size="size"
-        v-bind="ascii"
         @grid="grid = $event"
         @stats="statsAscii = $event"
         @perf="perfAscii = $event"
