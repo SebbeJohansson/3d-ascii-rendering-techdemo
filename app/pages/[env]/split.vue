@@ -8,9 +8,11 @@ definePageMeta({
   key: route => route.fullPath,
 })
 
-// Both halves share the environment's camera state, so dragging either one moves both.
+// Both halves share the environment's camera and player state, so dragging either one, or
+// driving the player, moves both.
 const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
+usePlayerDriver(env.value)
 const ascii = reactive(useAsciiSettings())
 const stats3d = ref<string>()
 const statsAscii = ref<string>()

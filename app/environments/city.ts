@@ -16,6 +16,14 @@ export const city: Environment = {
   fogFar: 1400,
   size: { min: 2, max: 30, default: 12, label: n => `${n} × ${n} blocks` },
 
+  // The crossing nearest the camera's target, so a car starts on the road.
+  spawn(blocks, { target }) {
+    const pitch = BLOCK_SIZE + ROAD_WIDTH
+    const first = -(blocks * pitch + ROAD_WIDTH) / 2 + ROAD_WIDTH / 2
+    const snap = (v: number) => first + Math.min(blocks, Math.max(0, Math.round((v - first) / pitch))) * pitch
+    return [snap(target[0]), 0, snap(target[2])]
+  },
+
   generate(seed, blocks) {
     const rand = mulberry32(seed)
     const primitives: Primitive[] = []

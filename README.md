@@ -22,6 +22,10 @@ You can look at each environment three ways:
 
 Swap `city` for `forest` or `dragon` to change scene.
 
+### Riding a dragon or a car
+
+The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. `Orbit` removes it and gives the mouse back. It works in all three views, and in `/split` both halves follow the same player.
+
 ## How the ASCII renderer works
 
 It runs on the CPU without a 3D engine. The code is in `app/lib/`:

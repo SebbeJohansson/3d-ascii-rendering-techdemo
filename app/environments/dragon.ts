@@ -184,6 +184,8 @@ export const dragon: Environment = {
   fogFar: 1500,
   size: { min: 1, max: VOXEL_SIZES.length, default: 3, label: n => `detail ${n} of ${VOXEL_SIZES.length}` },
   camera: { position: [95, 55, 115], target: [-8, 26, 0] },
+  // Beside the dragon rather than inside it.
+  spawn: () => [10, 0, 70],
 
   generate(seed, detail) {
     const mesh = dragonMesh(detail)
@@ -225,24 +227,29 @@ export const dragon: Environment = {
 
   animate(scene, time) {
     const mesh = scene.meshes?.[0]
-    const rig = mesh && meshRigs.get(mesh)
-    if (!rig) return
-    const { vertices, inner, outer, side, restPositions, restNormals } = rig
-    // Positive angles swing the wings down. The whole wing beats around a slightly raised
-    // middle; the outer part adds a delayed stroke on top, like a wave along the wing.
-    const flap = 0.15 + 0.45 * Math.sin(time * FLAP_SPEED)
-    const lag = 0.35 * Math.sin(time * FLAP_SPEED - 0.7)
-    for (let k = 0; k < vertices.length; k++) {
-      const o = vertices[k]! * 3
-      const s = side[k]!
-      const angle = s * (inner[k]! * flap + outer[k]! * lag)
-      const cos = Math.cos(angle)
-      const sin = Math.sin(angle)
-      // Rotate around the hinge: relative to the pivot for positions, as-is for normals.
-      const [px, py] = HINGE_PIVOT
-      const pz = HINGE_PIVOT[2] * s
-      rotateInto(mesh.positions, o, restPositions[o]! - px, restPositions[o + 1]! - py, restPositions[o + 2]! - pz, cos, sin, px, py, pz)
-      rotateInto(mesh.normals, o, restNormals[o]!, restNormals[o + 1]!, restNormals[o + 2]!, cos, sin)
-    }
+    if (mesh) flapWings(mesh, time)
   },
+}
+
+/** Poses a mesh from dragon.generate() with its wings at `time` (seconds), in place. */
+export function flapWings(mesh: Mesh, time: number) {
+  const rig = meshRigs.get(mesh)
+  if (!rig) return
+  const { vertices, inner, outer, side, restPositions, restNormals } = rig
+  // Positive angles swing the wings down. The whole wing beats around a slightly raised
+  // middle; the outer part adds a delayed stroke on top, like a wave along the wing.
+  const flap = 0.15 + 0.45 * Math.sin(time * FLAP_SPEED)
+  const lag = 0.35 * Math.sin(time * FLAP_SPEED - 0.7)
+  for (let k = 0; k < vertices.length; k++) {
+    const o = vertices[k]! * 3
+    const s = side[k]!
+    const angle = s * (inner[k]! * flap + outer[k]! * lag)
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+    // Rotate around the hinge: relative to the pivot for positions, as-is for normals.
+    const [px, py] = HINGE_PIVOT
+    const pz = HINGE_PIVOT[2] * s
+    rotateInto(mesh.positions, o, restPositions[o]! - px, restPositions[o + 1]! - py, restPositions[o + 2]! - pz, cos, sin, px, py, pz)
+    rotateInto(mesh.normals, o, restNormals[o]!, restNormals[o + 1]!, restNormals[o + 2]!, cos, sin)
+  }
 }

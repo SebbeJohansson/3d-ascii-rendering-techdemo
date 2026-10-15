@@ -18,8 +18,12 @@ const emit = defineEmits<{
 
 const container = ref<HTMLDivElement>()
 const view = useCameraView(props.env)
+const playerKind = usePlayerKind()
+const playerPose = usePlayerPose(props.env)
+/** A spawned player owns the camera; mouse orbiting is off until it is removed. */
+const following = computed(() => !!playerPose.value)
 
-const { scene, camera, build, animate, dispose } = createEnvironmentScene()
+const { scene, camera, build, animate, setPlayer, placePlayer, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let controls: OrbitControls | undefined
 let resizeObserver: ResizeObserver | undefined
@@ -49,6 +53,7 @@ onMounted(async () => {
   container.value!.appendChild(renderer.domElement)
 
   controls = createOrbitControls(camera, renderer.domElement, view)
+  controls.enabled = !following.value
   rebuild()
 
   // Dev only: lets the browser console reach the live scene, e.g.
@@ -63,7 +68,9 @@ onMounted(async () => {
     // CPU time to update and submit the frame. The GPU finishes the work asynchronously.
     const start = performance.now()
     animate(start / 1000)
-    controls!.update()
+    placePlayer(playerPose.value, start / 1000)
+    // Orbit controls would pull the chase camera out to their minimum distance.
+    if (!following.value) controls!.update()
     renderer!.render(scene, camera)
     meter.frame(performance.now() - start)
     meter.tick()
@@ -71,11 +78,22 @@ onMounted(async () => {
 })
 
 watch(() => [props.env, props.seed, props.size], rebuild)
+watch([playerKind, () => props.seed], ([kind, seed]) => setPlayer(kind, seed), { immediate: true })
+watch(following, (on) => {
+  if (controls) controls.enabled = !on
+})
 
 // Follow camera moves made elsewhere (the ASCII half of the split view). Our own controls
 // write here too, but then the camera already matches and nothing happens.
 watch(view, ({ position, target }) => {
   if (!controls) return
+  if (following.value) {
+    camera.position.set(...position)
+    camera.lookAt(...target)
+    // Orbiting resumes around the player once it is removed.
+    controls.target.set(...target)
+    return
+  }
   const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]!) < 1e-6)
   if (same(camera.position.toArray(), position) && same(controls.target.toArray(), target)) return
   // Drop any glide left over from an earlier drag here: one undamped update applies and

@@ -1,4 +1,5 @@
 import type { CameraView } from '../lib/camera'
+import type { Vec3 } from '../lib/math'
 
 export type Shape = 'box' | 'cylinder' | 'cone' | 'sphere'
 
@@ -62,6 +63,11 @@ export interface Environment {
   /** The size slider in the panel. */
   size: { min: number, max: number, default: number, label: (size: number) => string }
   generate: (seed: number, size: number) => EnvironmentScene
+  /**
+   * Where a spawned player appears, given the size and the current camera. Only x and z are
+   * used. Defaults to the point the camera looks at.
+   */
+  spawn?: (size: number, view: CameraView) => Vec3
   /**
    * Makes the environment move. Called before every frame with a scene from generate() and
    * the time in seconds; it updates that scene's mesh positions and normals in place.

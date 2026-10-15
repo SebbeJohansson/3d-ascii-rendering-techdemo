@@ -6,7 +6,8 @@
 import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
 import type { EnvironmentScene } from '../environments/types'
-import { buildRaycastScene, renderScene, updateMeshes, type Camera, type RaycastScene } from './raycaster'
+import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
+import { buildRaycastPlayer, buildRaycastScene, placePlayer, renderScene, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -33,8 +34,10 @@ export interface Tracer {
   /** A frame is being traced; wait for onFrame before asking for the next. */
   readonly busy: boolean
   setScene: (envId: string, seed: number, size: number) => void
-  /** `time` (seconds) poses animated environments; others ignore it. */
-  render: (camera: Camera, cols: number, rows: number, time: number) => void
+  /** Spawns a player (or removes it, with null). Its colors come from the seed. */
+  setPlayer: (kind: PlayerKind | null, seed: number) => void
+  /** `time` (seconds) poses animated environments and players; `player` places the player. */
+  render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose) => void
   dispose: () => void
 }
 
@@ -46,6 +49,33 @@ export function poseScene(envId: string, generated: EnvironmentScene, scene: Ray
   updateMeshes(scene, generated)
 }
 
+/** The ray tracer's copy of the spawned player, kept apart from the environment's scene. */
+export function createPlayerSlot() {
+  let model: PlayerModel | undefined
+  let raycast: RaycastPlayer | undefined
+  return {
+    set(kind: PlayerKind | null, seed: number) {
+      if (!kind) {
+        model = raycast = undefined
+        return
+      }
+      const player = getPlayer(kind)
+      model = player.build(seed)
+      raycast = buildRaycastPlayer(model.mesh, player.scale)
+    },
+    /** Poses and places the player for this frame and puts it into `scene`, or takes it out. */
+    attach(scene: RaycastScene, pose: PlayerPose | undefined, time: number) {
+      if (!model || !raycast || !pose) {
+        scene.player = undefined
+        return
+      }
+      model.animate?.(time)
+      placePlayer(raycast, pose, !!model.animate)
+      scene.player = raycast
+    },
+  }
+}
+
 function emptyFrame(cols: number, rows: number): TracedFrame {
   const n = cols * rows
   return { cols, rows, ink: new Uint8Array(n), rgb: new Uint8Array(n * 3), depths: new Float32Array(n), normals: new Int8Array(n * 3), traceMs: 0 }
@@ -55,6 +85,7 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
   let scene: RaycastScene | undefined
   let generated: EnvironmentScene | undefined
   let currentEnv = ''
+  const player = createPlayerSlot()
   return {
     label: 'main thread',
     busy: false,
@@ -65,9 +96,13 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
       currentEnv = envId
       onScene(generated.summary)
     },
-    render(camera, cols, rows, time) {
+    setPlayer(kind, seed) {
+      player.set(kind, seed)
+    },
+    render(camera, cols, rows, time, pose) {
       if (!scene || !generated) return
       poseScene(currentEnv, generated, scene, time)
+      player.attach(scene, pose, time)
       const frame = emptyFrame(cols, rows)
       const start = performance.now()
       renderScene(scene, camera, cols, rows, frame.ink, frame.rgb, frame.depths, frame.normals)
@@ -133,7 +168,10 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     setScene(envId, seed, size) {
       for (const w of workers) post(w, { type: 'scene', envId, seed, size })
     },
-    render(camera, cols, rows, time) {
+    setPlayer(kind, seed) {
+      for (const w of workers) post(w, { type: 'player', kind, seed })
+    },
+    render(camera, cols, rows, time, player) {
       if (pending) return
       pending = workers.length
       frameStart = performance.now()
@@ -141,7 +179,7 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
       workers.forEach((w, k) => {
         const band = emptyFrame(cols, Math.max(0, Math.ceil((rows - k) / count)))
         const { ink, rgb, depths, normals } = band
-        post(w, { type: 'render', camera, time, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
+        post(w, { type: 'render', camera, time, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
       })
     },
     dispose() {

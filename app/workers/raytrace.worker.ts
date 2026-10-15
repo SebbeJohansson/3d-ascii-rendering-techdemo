@@ -4,12 +4,14 @@
 import { getEnvironment } from '../environments'
 import type { EnvironmentScene } from '../environments/types'
 import { buildRaycastScene, renderScene, type Camera, type RaycastScene } from '../lib/raycaster'
-import { poseScene } from '../lib/tracers'
+import { createPlayerSlot, poseScene } from '../lib/tracers'
+import type { PlayerKind, PlayerPose } from '../players'
 
 export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
+  | { type: 'player', kind: PlayerKind | null, seed: number }
   /** Traces rows rowStart, rowStart + rowStep, ... into tightly packed ink/rgb. */
-  | { type: 'render', camera: Camera, time: number, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
+  | { type: 'render', camera: Camera, time: number, player?: PlayerPose, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 export type WorkerResponse =
   | { type: 'scene', summary: string }
@@ -18,6 +20,7 @@ export type WorkerResponse =
 let scene: RaycastScene | undefined
 let generated: EnvironmentScene | undefined
 let envId = ''
+const player = createPlayerSlot()
 
 function reply(message: WorkerResponse, transfer: Transferable[] = []) {
   self.postMessage(message, { transfer })
@@ -32,10 +35,14 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     envId = msg.envId
     reply({ type: 'scene', summary: generated.summary })
   }
+  else if (msg.type === 'player') {
+    player.set(msg.kind, msg.seed)
+  }
   else if (scene && generated) {
-    const { camera, time, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg
+    const { camera, time, player: pose, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg
     // Every worker poses the scene for the same time, so all rows show the same moment.
     poseScene(envId, generated, scene, time)
+    player.attach(scene, pose, time)
     renderScene(scene, camera, cols, rows, ink, rgb, depths, normals, rowStart, rowStep)
     // Hand the buffers back without copying.
     reply({ type: 'frame', rowStart, rowStep, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])

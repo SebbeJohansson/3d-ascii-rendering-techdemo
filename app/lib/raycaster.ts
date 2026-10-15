@@ -4,9 +4,12 @@
  *
  * Primitives are bucketed by their bounding boxes into a uniform grid on the ground plane,
  * so a ray only tests the primitives in the cells it actually crosses (2D DDA traversal).
- * Triangle meshes go into a BVH (see bvh.ts) instead.
+ * Triangle meshes go into a BVH (see bvh.ts) instead. A spawned player has a BVH of its own,
+ * built once in the player's own space; rays are moved into that space instead of moving
+ * its triangles every time it moves.
  */
-import type { Environment, EnvironmentScene, Shape } from '../environments/types'
+import type { Environment, EnvironmentScene, Mesh, Shape } from '../environments/types'
+import type { PlayerPose } from '../players/types'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { buildBvh, bvhHit, intersectBvh, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
@@ -42,6 +45,23 @@ export interface RaycastScene {
     /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
     albedo: Float32Array
   }
+  /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
+  player?: RaycastPlayer
+}
+
+/** A player's mesh in its own space, and where it currently is. */
+export interface RaycastPlayer {
+  bvh: Bvh
+  normals: Float32Array
+  /** Diffuse albedo per vertex, like RaycastScene.mesh. */
+  albedo: Float32Array
+  scale: number
+  x: number
+  y: number
+  z: number
+  /** cos and sin of the heading. */
+  cos: number
+  sin: number
 }
 
 export interface Camera {
@@ -63,6 +83,7 @@ const SHAPE_CODES: Record<Shape, number> = { box: BOX, cylinder: CYLINDER, cone:
 const GROUND = -1
 const MISS = -2
 const MESH = -3
+const PLAYER = -4
 
 // Shading follows three's MeshStandardMaterial so both views match: colors are converted to
 // linear light, lit with Lambert diffuse (albedo / π × irradiance) from the sun plus a hemisphere
@@ -172,6 +193,33 @@ export function updateMeshes(s: RaycastScene, { meshes = [] }: EnvironmentScene)
   }
   refitBvh(bvh)
   s.maxHeight = Math.max(s.primitivesHeight, bvh.bounds[4]!)
+}
+
+/**
+ * Builds the ray tracer's copy of a player. The BVH shares the mesh's position and normal
+ * arrays, so after animating the mesh, placePlayer(..., true) refits it.
+ */
+export function buildRaycastPlayer(mesh: Mesh, scale: number): RaycastPlayer {
+  const keep = 1 - (mesh.metalness ?? 0)
+  return {
+    bvh: buildBvh(mesh.positions, mesh.indices),
+    normals: mesh.normals,
+    albedo: mesh.colors.map(c => c * keep),
+    scale,
+    x: 0,
+    y: 0,
+    z: 0,
+    cos: 1,
+    sin: 0,
+  }
+}
+
+/** Moves a player to a pose. Pass `animated` when its mesh changed shape since the last call. */
+export function placePlayer(p: RaycastPlayer, { position, heading }: PlayerPose, animated: boolean) {
+  ;[p.x, p.y, p.z] = position
+  p.cos = Math.cos(heading)
+  p.sin = Math.sin(heading)
+  if (animated) refitBvh(p.bvh)
 }
 
 /** Result of the last trace() call. Reused to avoid allocating per ray. */
@@ -324,7 +372,34 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   const iy = 1 / (dy || 1e-12)
   const iz = 1 / (dz || 1e-12)
 
-  // Clip the ray to the environment's bounding box first.
+  let best = Infinity
+  hit.prim = MISS
+
+  // The player first: it can be outside the environment's box, which is clipped to below.
+  // Its triangles stay in its own space, so turn the ray into that space instead: undo the
+  // position, heading and scale. A point t along the ray stays at t along the moved ray.
+  const pl = s.player
+  if (pl) {
+    const k = 1 / pl.scale
+    const rx = ox - pl.x
+    const rz = oz - pl.z
+    const t = intersectBvh(
+      pl.bvh,
+      (rx * pl.cos - rz * pl.sin) * k, (oy - pl.y) * k, (rx * pl.sin + rz * pl.cos) * k,
+      (dx * pl.cos - dz * pl.sin) * k, dy * k, (dx * pl.sin + dz * pl.cos) * k,
+      Infinity, anyHit,
+    )
+    if (t < Infinity) {
+      if (anyHit) return true
+      best = t
+      hit.prim = PLAYER
+      hit.triangle = bvhHit.triangle
+      hit.u = bvhHit.u
+      hit.v = bvhHit.v
+    }
+  }
+
+  // Clip the ray to the environment's bounding box.
   let t0 = 0
   let t1 = Infinity
   let a = (-s.half - ox) * ix
@@ -339,14 +414,15 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
   b = (s.half - oz) * iz
   t0 = Math.max(t0, Math.min(a, b))
   t1 = Math.min(t1, Math.max(a, b))
-  hit.prim = MISS
-  if (t0 > t1) return false
+  if (t0 > t1) {
+    hit.t = best
+    return best < Infinity
+  }
 
-  let best = Infinity
   // The ground covers the whole environment at y = 0.
   if (!anyHit && dy < 0) {
     const tg = -oy * iy
-    if (tg >= t0 && tg <= t1) {
+    if (tg >= t0 && tg <= t1 && tg < best) {
       best = tg
       hit.prim = GROUND
       hit.nx = 0
@@ -510,10 +586,10 @@ export function renderScene(
       let br: number
       let bg: number
       let bb: number
-      if (prim === MESH) {
+      if (prim === MESH || prim === PLAYER) {
         // Blend the triangle's three vertex normals and colors by where the ray hit it,
         // which makes the faceted mesh look smooth.
-        const { normals: vertexNormals, albedo, bvh } = s.mesh!
+        const { normals: vertexNormals, albedo, bvh } = prim === MESH ? s.mesh! : s.player!
         const t3 = hit.triangle * 3
         const i0 = bvh.indices[t3]! * 3
         const i1 = bvh.indices[t3 + 1]! * 3
@@ -524,6 +600,13 @@ export function renderScene(
         nx = vertexNormals[i0]! * w0 + vertexNormals[i1]! * w1 + vertexNormals[i2]! * w2
         ny = vertexNormals[i0 + 1]! * w0 + vertexNormals[i1 + 1]! * w1 + vertexNormals[i2 + 1]! * w2
         nz = vertexNormals[i0 + 2]! * w0 + vertexNormals[i1 + 2]! * w1 + vertexNormals[i2 + 2]! * w2
+        if (prim === PLAYER) {
+          // From the player's space back to the world: turn by its heading.
+          const { cos, sin } = s.player!
+          const wx = nx * cos + nz * sin
+          nz = -nx * sin + nz * cos
+          nx = wx
+        }
         const nl = Math.hypot(nx, ny, nz) || 1
         // Seen from behind (e.g. through a gap): shade the side facing the camera.
         const flip = nx * dx + ny * dy + nz * dz > 0 ? -1 / nl : 1 / nl

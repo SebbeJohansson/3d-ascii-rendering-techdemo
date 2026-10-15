@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Ref } from 'vue'
-import type { Environment, EnvironmentScene, Primitive, Shape } from '../environments/types'
+import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
+import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { CAMERA_FOV, MAX_DISTANCE, MAX_POLAR_ANGLE, MIN_DISTANCE, type CameraView } from './camera'
 import type { Vec3 } from './math'
@@ -15,6 +16,27 @@ const UNIT_GEOMETRY: Record<Shape, () => THREE.BufferGeometry> = {
   cylinder: () => new THREE.CylinderGeometry(0.5, 0.5, 1, 12).translate(0, 0.5, 0),
   cone: () => new THREE.ConeGeometry(0.5, 1, 12).translate(0, 0.5, 0),
   sphere: () => new THREE.SphereGeometry(0.5, 16, 12).translate(0, 0.5, 0),
+}
+
+/** A shadow-casting three mesh for one of our triangle meshes. */
+function createMesh(m: Mesh) {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(m.positions, 3))
+  geometry.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(m.colors, 3))
+  geometry.setIndex(new THREE.BufferAttribute(m.indices, 1))
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: m.roughness ?? 1, metalness: m.metalness ?? 0 }),
+  )
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  return mesh
+}
+
+function disposeMesh(mesh: THREE.Mesh) {
+  mesh.geometry.dispose()
+  ;(mesh.material as THREE.Material).dispose()
 }
 
 /** Builds the three scene graph for an environment. Rendering is left to the caller. */
@@ -94,21 +116,11 @@ export function createEnvironmentScene() {
     }
 
     for (const m of meshes) {
-      const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.BufferAttribute(m.positions, 3))
-      geometry.setAttribute('normal', new THREE.BufferAttribute(m.normals, 3))
-      geometry.setAttribute('color', new THREE.BufferAttribute(m.colors, 3))
-      geometry.setIndex(new THREE.BufferAttribute(m.indices, 1))
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({ vertexColors: true, roughness: m.roughness ?? 1, metalness: m.metalness ?? 0 }),
-      )
-      mesh.castShadow = true
-      mesh.receiveShadow = true
+      const mesh = createMesh(m)
       // Moving vertices make the precomputed bounding sphere wrong; don't cull with it.
       mesh.frustumCulled = !env.animate
       content.add(mesh)
-      current.geometries.push(geometry)
+      current.geometries.push(mesh.geometry)
     }
     return summary
   }
@@ -123,7 +135,48 @@ export function createEnvironmentScene() {
     }
   }
 
-  return { scene, camera, build, animate, dispose: clear }
+  /** The spawned player, kept outside `content` so rebuilding the environment keeps it. */
+  let player: { model: PlayerModel, mesh: THREE.Mesh } | undefined
+
+  /** Spawns a player (or removes it, with null). Its colors come from the seed. */
+  function setPlayer(kind: PlayerKind | null, seed: number) {
+    if (player) {
+      scene.remove(player.mesh)
+      disposeMesh(player.mesh)
+      player = undefined
+    }
+    if (!kind) return
+    const type = getPlayer(kind)
+    const model = type.build(seed)
+    const mesh = createMesh(model.mesh)
+    mesh.scale.setScalar(type.scale)
+    mesh.frustumCulled = !model.animate
+    mesh.visible = false
+    scene.add(mesh)
+    player = { model, mesh }
+  }
+
+  /** Poses the player for `time` (seconds) and moves it to `pose`. */
+  function placePlayer(pose: PlayerPose | undefined, time: number) {
+    if (!player) return
+    const { model, mesh } = player
+    mesh.visible = !!pose
+    if (!pose) return
+    mesh.position.set(...pose.position)
+    mesh.rotation.y = pose.heading
+    if (model.animate) {
+      model.animate(time)
+      mesh.geometry.attributes.position!.needsUpdate = true
+      mesh.geometry.attributes.normal!.needsUpdate = true
+    }
+  }
+
+  function dispose() {
+    clear()
+    setPlayer(null, 0)
+  }
+
+  return { scene, camera, build, animate, setPlayer, placePlayer, dispose }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

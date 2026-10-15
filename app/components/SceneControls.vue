@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ENVIRONMENTS, type Environment } from '~/environments'
 import type { FramePerf } from '~/lib/frameMeter'
+import { getPlayer, PLAYERS } from '~/players'
 
 export type ViewMode = '3d' | 'ascii' | 'split'
 
@@ -13,6 +14,7 @@ const props = defineProps<{
 }>()
 
 const { seed, size } = useSceneSettings(props.env)
+const playerKind = usePlayerKind()
 
 function randomize() {
   seed.value = Math.floor(Math.random() * 1e6)
@@ -41,6 +43,20 @@ function viewPath(envId: string, mode: ViewMode) {
         Split
       </NuxtLink>
     </nav>
+    <nav>
+      <button type="button" :class="{ active: !playerKind }" @click="playerKind = null">
+        Orbit
+      </button>
+      <button v-for="p in PLAYERS" :key="p.id" type="button" :class="{ active: playerKind === p.id }" @click="playerKind = p.id">
+        {{ p.name }}
+      </button>
+    </nav>
+    <p v-if="playerKind" class="keys">
+      <kbd>W</kbd><kbd>S</kbd> speed · <kbd>A</kbd><kbd>D</kbd> turn
+      <template v-if="getPlayer(playerKind).flies">
+        · <kbd>Space</kbd> up · <kbd>Shift</kbd> down
+      </template>
+    </p>
     <label>
       Seed
       <input v-model.number="seed" type="number">
@@ -50,7 +66,7 @@ function viewPath(envId: string, mode: ViewMode) {
       <input v-model.number="size" type="range" :min="env.size.min" :max="env.size.max">
     </label>
     <slot />
-    <button type="button" @click="randomize">
+    <button type="button" class="primary" @click="randomize">
       New {{ env.name.toLowerCase() }}
     </button>
     <p v-if="stats" class="stats">
@@ -90,9 +106,14 @@ nav {
   border-radius: 7px;
 }
 
-nav a {
+nav a,
+nav button {
   flex: 1;
   padding: 5px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
   border-radius: 5px;
   text-align: center;
   font-size: 13px;
@@ -101,7 +122,7 @@ nav a {
   text-decoration: none;
 }
 
-nav a.active {
+nav .active {
   background: white;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
 }
@@ -113,7 +134,7 @@ nav a.active {
   font-size: 13px;
 }
 
-button {
+.primary {
   padding: 8px;
   border: 0;
   border-radius: 6px;
@@ -134,6 +155,22 @@ button {
 .perf.parts {
   font-weight: 400;
   color: #555;
+}
+
+.keys {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.8;
+  color: #555;
+}
+
+kbd {
+  padding: 1px 4px;
+  margin-right: 2px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: white;
+  font: 11px ui-monospace, Menlo, Consolas, monospace;
 }
 
 .stats {

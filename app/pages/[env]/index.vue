@@ -10,6 +10,7 @@ definePageMeta({
 
 const env = useRouteEnvironment()
 const { seed, size } = useSceneSettings(env.value)
+usePlayerDriver(env.value)
 const stats = ref<string>()
 const perf = ref<FramePerf>()
 </script>

@@ -6,6 +6,7 @@ import { hexToCss } from '~/lib/color'
 import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createGlyphRenderer } from '~/lib/glyphRenderer'
 import type { Camera } from '~/lib/raycaster'
+import type { PlayerPose } from '~/players'
 import { createMainThreadTracer, createWorkerTracer, type TracedFrame, type Tracer } from '~/lib/tracers'
 
 const props = defineProps<{
@@ -38,6 +39,8 @@ const canvas = ref<HTMLCanvasElement>()
 const skyCss = computed(() => hexToCss(props.env.sky))
 
 const view = useCameraView(props.env)
+const playerKind = usePlayerKind()
+const playerPose = usePlayerPose(props.env)
 const glyphs = createGlyphRenderer()
 const meter = createFrameMeter(perf => emit('perf', perf))
 let tracer: Tracer | undefined
@@ -59,6 +62,7 @@ function startTracer() {
     onFrame,
   }
   tracer = props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
+  tracer.setPlayer(playerKind.value, props.seed)
   rebuild()
 }
 
@@ -101,19 +105,25 @@ function camera(): Camera {
   return { position: [...position], target: [...target], fov: CAMERA_FOV, aspect: width / height }
 }
 
+function player(): PlayerPose | undefined {
+  const pose = playerPose.value
+  return pose && { position: [...pose.position], heading: pose.heading }
+}
+
 // Only re-trace when something changed: a still environment is static between camera moves.
 function tick() {
   frameId = requestAnimationFrame(tick)
   meter.tick()
   // Animated environments change every frame, so keep tracing.
-  if (props.env.animate) dirty = true
+  if (props.env.animate || playerPose.value) dirty = true
   // One frame in flight at a time. `dirty` stays set, so the next one goes out when it lands.
   if (!dirty || !cols || !tracer || tracer.busy) return
   dirty = false
-  tracer.render(camera(), cols, rows, performance.now() / 1000)
+  tracer.render(camera(), cols, rows, performance.now() / 1000, player())
 }
 
-// Mouse controls: left drag orbits, right or shift drag pans, wheel zooms.
+// Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Off while a
+// spawned player owns the camera.
 let drag: { x: number, y: number, pan: boolean } | undefined
 
 function setView(next: CameraView) {
@@ -122,6 +132,7 @@ function setView(next: CameraView) {
 }
 
 function onPointerDown(e: PointerEvent) {
+  if (playerPose.value) return
   canvas.value!.setPointerCapture(e.pointerId)
   drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }
 }
@@ -141,6 +152,7 @@ function onPointerUp() {
 
 function onWheel(e: WheelEvent) {
   e.preventDefault()
+  if (playerPose.value) return
   setView(zoomView(view.value, e.deltaY))
 }
 
@@ -161,6 +173,10 @@ watch(() => props.fontSize, resize)
 // The camera can also be moved from elsewhere (the 3D half of the split view).
 watch(view, () => (dirty = true))
 watch(() => props.worker, startTracer)
+watch([playerKind, () => props.seed], () => {
+  tracer?.setPlayer(playerKind.value, props.seed)
+  dirty = true
+})
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(frameId)
