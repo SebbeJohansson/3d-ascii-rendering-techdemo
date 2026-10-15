@@ -15,7 +15,7 @@ export interface BenchmarkStep {
 
 /** "3D", "ASCII · CPU", ... */
 export function stepName({ view, method }: BenchmarkStep) {
-  return view === '3d' ? '3D' : `ASCII · ${method === 'shader' ? 'shader' : method?.toUpperCase()}`
+  return view === '3d' ? '3D' : `ASCII · ${method === 'shader' ? 'shader' : method === 'pixels' ? 'pixels' : method?.toUpperCase()}`
 }
 
 /** Seconds per view. The first WARMUP seconds (shader compiles, first trace) aren't counted. */
@@ -90,7 +90,7 @@ export function useBenchmark() {
       const queue: BenchmarkStep[] = [
         { view: '3d' },
         { view: 'ascii', method: 'cpu' },
-        ...(hasWebGpu() ? [{ view: 'ascii', method: 'gpu' } as const] : []),
+        ...(hasWebGpu() ? [{ view: 'ascii', method: 'gpu' } as const, { view: 'ascii', method: 'pixels' } as const] : []),
         { view: 'ascii', method: 'shader' },
       ]
       state.value = { env: env.id, queue, results: [], returnTo: route.fullPath, running: true, elapsed: 0, method: method.value }

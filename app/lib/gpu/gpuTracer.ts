@@ -82,7 +82,8 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   let buffers: Record<'params' | 'prims' | 'grid' | 'meshF' | 'meshU' | 'playerF' | 'playerU', GPUBuffer> | undefined
   let mesh: PackedBvh | undefined
   let playerPacked: PackedBvh | undefined
-  let output: { cells: number, buffer: GPUBuffer, readback: GPUBuffer } | undefined
+  /** No readback buffer when drawing to a canvas: the cells never leave the GPU. */
+  let output: { cells: number, buffer: GPUBuffer, readback?: GPUBuffer } | undefined
   let bindGroup: GPUBindGroup | undefined
   /** Set before the device is ready; applied once it is. */
   let pendingScene: [string, number, number] | undefined
@@ -212,12 +213,12 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   function ensureOutput(count: number) {
     if (output && output.cells >= count) return
     output?.buffer.destroy()
-    output?.readback.destroy()
+    output?.readback?.destroy()
     const size = Math.max(16, count * CELL_WORDS * 4)
     output = {
       cells: count,
       buffer: device!.createBuffer({ size, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC }),
-      readback: device!.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+      readback: present ? undefined : device!.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
     }
     bindGroup = undefined
     if (present) present.bindGroup = undefined
@@ -263,10 +264,10 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       return
     }
     const bytes = count * CELL_WORDS * 4
-    encoder.copyBufferToBuffer(output!.buffer, 0, output!.readback, 0, bytes)
+    const readback = output!.readback!
+    encoder.copyBufferToBuffer(output!.buffer, 0, readback, 0, bytes)
     device.queue.submit([encoder.finish()])
 
-    const readback = output!.readback
     await readback.mapAsync(GPUMapMode.READ, 0, bytes)
     if (disposed) return
     const words = new Uint32Array(readback.getMappedRange(0, bytes).slice(0))
@@ -334,7 +335,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       present?.params.destroy()
       present?.context.unconfigure()
       output?.buffer.destroy()
-      output?.readback.destroy()
+      output?.readback?.destroy()
     },
   }
 }

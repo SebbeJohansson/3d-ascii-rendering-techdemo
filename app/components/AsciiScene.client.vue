@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// No 3D engine here: the scene is ray traced on the CPU, one ray per character.
+// No 3D engine here: the scene is ray traced, one ray per character, or with method 'pixels'
+// one ray per pixel on the GPU, drawn onto the canvas without characters.
 import type { Environment } from '~/environments'
 import { lightingAt } from '~/environments/lighting'
 import { CAMERA_FOV, orbitView, panView, zoomView, type CameraView } from '~/lib/camera'
@@ -31,7 +32,11 @@ const props = defineProps<{
   coarseDrag: boolean
   /** Ray trace in a pool of Web Workers instead of on the main thread. */
   worker: boolean
-  /** 'gpu' ray traces with WebGPU compute; anything else on the CPU (see `worker`). */
+  /**
+   * 'gpu' ray traces with WebGPU compute, 'pixels' too but at one ray per pixel; anything else
+   * on the CPU (see `worker`). Mount a new component to switch to or from 'pixels': its canvas
+   * holds a WebGPU context instead of a 2D one.
+   */
   method: AsciiMethod
   /** Character height in CSS pixels. Smaller characters mean more cells and more detail. */
   fontSize: number
@@ -83,9 +88,15 @@ let wheelTimer: ReturnType<typeof setTimeout> | undefined
 /** Whether the frame in flight, or else the last one, was traced on the coarse grid. */
 let tracedCoarse = false
 
+const pixels = props.method === 'pixels'
+/** Full resolution traces at most this many rays, past which a 4K screen at 2x would be 33M. */
+const MAX_PIXELS = 8_300_000
+/** While moving, full resolution traces one ray per this many pixels across. */
+const PIXELS_COARSE = 3
+
 /** The grid traced while moving: cells of at least ~10 px, and at least twice as big as usual. */
 function coarseGrid() {
-  const factor = Math.max(2, Math.ceil(10 / props.fontSize))
+  const factor = pixels ? PIXELS_COARSE : Math.max(2, Math.ceil(10 / props.fontSize))
   return { cols: Math.ceil(cols / factor), rows: Math.ceil(rows / factor) }
 }
 
@@ -96,11 +107,13 @@ function startTracer() {
       // A tracer that wasn't ready yet (the GPU device starts asynchronously) skipped the
       // frames asked for until now: trace again.
       dirty = true
-      emit('stats', `${summary} · ${props.method === 'gpu' ? 'GPU' : 'CPU'} ray tracer · ${tracer!.label}`)
+      emit('stats', `${summary} · ${pixels ? 'GPU ray tracer, per pixel' : props.method === 'gpu' ? 'GPU ray tracer' : 'CPU ray tracer'} · ${tracer!.label}`)
     },
     onFrame,
   }
-  tracer = props.method === 'gpu' ? createGpuTracer(events) : props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
+  tracer = pixels
+    ? createGpuTracer(events, canvas.value)
+    : props.method === 'gpu' ? createGpuTracer(events) : props.worker ? createWorkerTracer(events) : createMainThreadTracer(events)
   tracer.setPlayer(playerKind.value, props.seed)
   rebuild()
 }
@@ -118,7 +131,12 @@ function onFrame(frame: TracedFrame) {
       dirty = true
       return
     }
-    frame = upscaleFrame(frame, cols, rows)
+    // Full resolution frames are already on the canvas, stretched by the GPU.
+    if (!pixels) frame = upscaleFrame(frame, cols, rows)
+  }
+  if (pixels) {
+    meter.frame(frame.traceMs, { trace: frame.traceMs })
+    return
   }
   last = frame
   lastCamera = tracing
@@ -139,9 +157,19 @@ function draw() {
 }
 
 function resize() {
-  if (!container.value || !canvas.value || !ctx) return
+  if (!container.value || !canvas.value) return
   width = container.value.clientWidth
   height = container.value.clientHeight
+  if (pixels) {
+    let dpr = Math.min(window.devicePixelRatio, 2)
+    dpr = Math.min(dpr, Math.sqrt(MAX_PIXELS / Math.max(1, width * height)))
+    cols = canvas.value.width = Math.max(1, Math.round(width * dpr))
+    rows = canvas.value.height = Math.max(1, Math.round(height * dpr))
+    emit('grid', { cols, rows })
+    dirty = true
+    return
+  }
+  if (!ctx) return
   ;({ cols, rows, cellWidth, cellHeight } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize))
   emit('grid', { cols, rows })
   dirty = true
@@ -222,7 +250,7 @@ function onWheel(e: WheelEvent) {
 onMounted(async () => {
   // .client components render their template after mount; wait for the refs to exist.
   await nextTick()
-  ctx = canvas.value!.getContext('2d')!
+  if (!pixels) ctx = canvas.value!.getContext('2d')!
   startTracer()
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container.value!)

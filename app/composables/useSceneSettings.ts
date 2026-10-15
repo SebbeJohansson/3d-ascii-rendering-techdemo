@@ -1,8 +1,11 @@
 import { getEnvironment, type Environment } from '~/environments'
 import { DEFAULT_VIEW, type CameraView } from '~/lib/camera'
 
-/** How the ASCII view is made: ray traced on the CPU or the GPU, or a shader over the 3D view. */
-export type AsciiMethod = 'cpu' | 'gpu' | 'shader'
+/**
+ * How the ASCII view is made: ray traced on the CPU or the GPU, a shader over the 3D view, or
+ * no characters at all: the GPU ray tracer at one ray per pixel.
+ */
+export type AsciiMethod = 'cpu' | 'gpu' | 'shader' | 'pixels'
 
 const STORAGE_PREFIX = 'city-generator:'
 
