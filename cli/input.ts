@@ -2,15 +2,17 @@
  * Keyboard and mouse input from a terminal in raw mode.
  *
  * Holding a key is the hard part. Most terminals only send key presses: holding W sends one
- * press, then repeats after about half a second. Terminals that support the kitty keyboard
- * protocol (kitty, WezTerm, Ghostty, foot, Alacritty, recent iTerm2) also send releases, and
- * are asked to. Elsewhere a key counts as held until its repeats stop arriving.
+ * press, then repeats after about half a second. So a key counts as held while its repeats
+ * keep arriving. Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty,
+ * foot, Alacritty) are asked to also report releases, which then end a hold right away.
+ * Releases only ever shorten a hold: some terminals say they support the protocol but never
+ * send them, and a key must not stay down forever.
  */
 
 const ESC = '\x1b['
-/** Without release events: how long a first press counts as held, covering the repeat delay. */
+/** How long a first press counts as held, covering the delay before key repeat starts. */
 const FIRST_HOLD_MS = 600
-/** Without release events: how long after a repeat a key still counts as held. */
+/** How long after a repeat a key still counts as held. */
 const REPEAT_HOLD_MS = 150
 
 export interface MouseEvent {
@@ -28,6 +30,8 @@ export interface InputHandlers {
   /** A key went down (not called for repeats). Names: 'w', 'up', 'space', 'escape', 'ctrl+c', ... */
   onKey: (name: string) => void
   onMouse: (event: MouseEvent) => void
+  /** Gets every raw sequence the terminal sends, for debugging input. */
+  onRaw?: (sequence: string) => void
 }
 
 // Kitty protocol key codes for keys that have no character.
@@ -39,17 +43,18 @@ const TOKEN = /\x1b\[[?<>]?[\d;:]*[A-Za-z~]|\x1bO[A-D]|\x1b|[\s\S]/g
 // An escape sequence cut off at the end of a chunk; the rest comes with the next one.
 const PARTIAL = /\x1b(\[[?<>]?[\d;:]*)?$/
 
-export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { onKey, onMouse }: InputHandlers) {
-  /** Key name → time (ms) until which it counts as held. Infinity until released, with releases. */
+export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { onKey, onMouse, onRaw }: InputHandlers) {
+  /** Key name → time (ms) until which it counts as held. */
   const held = new Map<string, number>()
+  /** Whether the kitty protocol was turned on, and whether a release has actually arrived. */
+  let kitty = false
   let releases = false
   let pending = ''
 
   function press(name: string, repeat: boolean) {
     const now = performance.now()
     const down = (held.get(name) ?? 0) > now
-    if (releases) held.set(name, Infinity)
-    else held.set(name, now + (down ? REPEAT_HOLD_MS : FIRST_HOLD_MS))
+    held.set(name, now + (down ? REPEAT_HOLD_MS : FIRST_HOLD_MS))
     if (!down && !repeat) onKey(name)
   }
 
@@ -58,6 +63,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
   }
 
   function token(t: string) {
+    onRaw?.(t)
     // Kitty protocol: CSI code[:alternates] ; modifiers[:event] u, or CSI 1 ; mods:event A-D.
     let m = /^\x1b\[(\d+)(?::[\d:]*)?(?:;(\d+)(?::(\d))?)?([uABCD~])$/.exec(t)
     if (m && (m[4] === 'u' || m[3])) {
@@ -66,13 +72,16 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
       const event = Number(m[3] ?? 1)
       let name = m[4] === 'u' ? KITTY_KEYS[code] ?? String.fromCodePoint(code).toLowerCase() : ARROWS[m[4]!]!
       if (mods & 4 && name.length === 1) name = `ctrl+${name}`
-      if (event === 3) release(name)
+      if (event === 3) {
+        releases = true
+        release(name)
+      }
       else press(name, event === 2)
       return
     }
     // Terminal replies. `CSI ? flags u` means the kitty protocol is supported: turn it on.
     if ((m = /^\x1b\[\?\d*u$/.exec(t))) {
-      releases = true
+      kitty = true
       // 1 disambiguate keys, 2 report releases, 8 report every key as an escape code.
       stdout.write(`${ESC}>11u`)
       return
@@ -114,7 +123,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
   }
 
   function stop() {
-    if (releases) stdout.write(`${ESC}<u`)
+    if (kitty) stdout.write(`${ESC}<u`)
     stdout.write(`${ESC}?1006l${ESC}?1002l`)
     stdin.off('data', onData)
     stdin.setRawMode(false)
@@ -126,7 +135,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
     stop,
     /** Whether a key is held down right now. */
     isDown: (name: string) => (held.get(name) ?? 0) > performance.now(),
-    /** True once the terminal turned out to report key releases. */
+    /** True once the terminal has actually reported a key release. */
     get releases() {
       return releases
     },

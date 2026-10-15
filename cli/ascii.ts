@@ -2,6 +2,7 @@
  * The ASCII view in a terminal: `yarn ascii [city|forest|dragon] [--seed N] [--size N]`.
  * Same ray tracer, environments and players as the browser, drawn with ANSI colors.
  */
+import { appendFileSync, writeFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { parseArgs } from 'node:util'
 import { ENVIRONMENTS, findEnvironment } from '../app/environments'
@@ -30,6 +31,7 @@ const { values, positionals } = parseArgs({
     size: { type: 'string' },
     workers: { type: 'string' },
     player: { type: 'string' },
+    'log-input': { type: 'string' },
     outlines: { type: 'boolean', default: true },
     backgrounds: { type: 'boolean', default: true },
     color: { type: 'boolean', default: true },
@@ -46,6 +48,7 @@ const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --no-outlines     no line characters on edges
   --no-backgrounds  characters only, no colored cells
   --no-color        dark characters on the sky color
+  --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
       Space/Shift dragon up/down · N new world · O outlines · B backgrounds · Esc quit
@@ -115,7 +118,8 @@ function status() {
   const keys = playerKind
     ? `WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
     : 'WASD/arrows look · Q/E zoom'
-  return ` ${env!.id} · seed ${seed} · ${summary} · ${cols}×${rows} · ${workerCount} threads · ${fps} │ ${riding}: ${keys} · 1 orbit 2 dragon 3 car · N new · Esc quit`
+  const releases = input.releases ? 'key releases on' : 'key repeat'
+  return ` ${env!.id} · seed ${seed} · ${summary} · ${cols}×${rows} · ${workerCount} threads · ${fps} · ${releases} │ ${riding}: ${keys} · 1 orbit 2 dragon 3 car · N new · Esc quit`
 }
 
 function resize() {
@@ -156,7 +160,17 @@ function newWorld() {
   spawn(kind)
 }
 
+const logFile = values['log-input']
+if (logFile) writeFileSync(logFile, '')
+/** With --log-input: one line per raw input sequence, with the camera as it was after the last one. */
+function logInput(sequence: string) {
+  if (!logFile) return
+  const round = (v: number[]) => v.map(n => Math.round(n * 10) / 10)
+  appendFileSync(logFile, `${performance.now().toFixed(0)} ${JSON.stringify(sequence)} camera ${round(view.position)} → ${round(view.target)}\n`)
+}
+
 const input = createInput(process.stdin, process.stdout, {
+  onRaw: logInput,
   onKey(name) {
     if (name === 'escape' || name === 'ctrl+c') quit()
     else if (name === '1') spawn(null)
