@@ -7,6 +7,7 @@ import { availableParallelism } from 'node:os'
 import { parseArgs } from 'node:util'
 import { ENVIRONMENTS, findEnvironment, type Environment } from '../app/environments'
 import { CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
+import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -31,6 +32,8 @@ const { values, positionals } = parseArgs({
     size: { type: 'string' },
     workers: { type: 'string' },
     player: { type: 'string' },
+    time: { type: 'string' },
+    cycle: { type: 'boolean', default: false },
     'log-input': { type: 'string' },
     outlines: { type: 'boolean', default: true },
     backgrounds: { type: 'boolean', default: true },
@@ -45,6 +48,8 @@ const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --seed N          world seed (random by default)
   --size N          environment size, as the browser's size slider
   --player KIND     start riding: dragon or car
+  --time HH         time of day to start at, 0-24 (default 12)
+  --cycle           start with day and night cycling
   --workers N       ray tracing threads (default: cores - 1, at most 8)
   --no-outlines     no line characters on edges
   --no-backgrounds  characters only, no colored cells
@@ -54,7 +59,8 @@ const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
       Space/Shift dragon up/down · Tab next environment · R characters/blocks
-      N new world · O outlines · B backgrounds · Esc quit
+      T day/night cycle · , and . an hour back/forward · N new world · O outlines
+      B backgrounds · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom.`
 
 if (values.help) {
@@ -76,6 +82,8 @@ let size = values.size ? Number(values.size) : env.size.default
 const workerCount = values.workers ? Number(values.workers) : Math.max(1, Math.min(8, availableParallelism() - 1))
 const style = { outlines: values.outlines, cellBackground: values.backgrounds, color: values.color, stretch: false, fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(env.sky) }
 
+let timeOfDay = values.time ? (((Number(values.time) / 24) % 1) + 1) % 1 : NOON
+let cycling = values.cycle
 let seed = values.seed ? Number(values.seed) : Math.floor(Math.random() * 1e6)
 let world = env.generate(seed, size)
 let summary = world.summary
@@ -125,7 +133,8 @@ function statusBar(loading?: string) {
   const fps = perf ? (perf.fps >= 1 ? `${Math.round(perf.fps)} fps · ${perf.ms.toFixed(1)} ms` : 'idle') : ''
   const releases = input.releases ? 'key releases' : 'key repeat'
   const what = loading ? `loading ${loading}…` : summary
-  return ` ${env.name} · ${what} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${fps} · ${releases}`
+  const clock = `${formatTimeOfDay(timeOfDay)}${cycling ? ' ↻' : ''}`
+  return ` ${env.name} · ${what} · ${clock} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${fps} · ${releases}`
 }
 
 /** The keys that do something right now, for the bar at the bottom. */
@@ -133,7 +142,7 @@ function keyBar() {
   const moves = !playerKind
     ? 'orbit: WASD look · Q/E zoom'
     : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · R ${resolution === 'blocks' ? 'characters' : 'blocks'} · N new · Esc quit`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · R ${resolution === 'blocks' ? 'characters' : 'blocks'} · T cycle · ,. hour · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
@@ -189,7 +198,8 @@ function cycleEnvironment(step: number) {
   const i = ENVIRONMENTS.indexOf(env)
   env = ENVIRONMENTS[(i + step + ENVIRONMENTS.length) % ENVIRONMENTS.length]!
   size = env.size.default
-  Object.assign(style, { fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(env.sky) })
+  // The sky color follows the time of day; step() sets it.
+  Object.assign(style, { fogNear: env.fogNear, fogFar: env.fogFar })
   view = structuredClone(env.camera ?? DEFAULT_VIEW)
   // A new sky color: every cell gets rewritten.
   layout()
@@ -220,6 +230,8 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === 'o') style.outlines = !style.outlines
     else if (name === 'b') style.cellBackground = !style.cellBackground
     else if (name === 'r') resolution = resolution === 'blocks' ? 'characters' : 'blocks'
+    else if (name === 't') cycling = !cycling
+    else if (name === ',' || name === '.') timeOfDay = (timeOfDay + (name === '.' ? 1 : 23) / 24) % 1
     else return
     dirty = true
     // Restyling needs every cell rewritten.
@@ -256,6 +268,11 @@ function onMouse(e: MouseEvent) {
 const axis = (plus: string[], minus: string[]) => Number(plus.some(input.isDown)) - Number(minus.some(input.isDown))
 
 function step(dt: number) {
+  if (cycling) {
+    timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1
+    dirty = true
+  }
+  style.sky = hexToBytes(lightingAt(timeOfDay, env.sky).sky)
   if (playerKind && pose) {
     const player = getPlayer(playerKind)
     const from = pose
@@ -292,7 +309,7 @@ function tick() {
   // One frame in flight at a time; a write still draining to the terminal also waits.
   if (dirty && cols && !tracer.busy && process.stdout.writableNeedDrain === false) {
     dirty = false
-    tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading })
+    tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
   }
   timer = setTimeout(tick, TICK_MS)
 }
