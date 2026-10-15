@@ -1,17 +1,28 @@
 import type { Environment } from '~/environments'
 import { DEFAULT_VIEW, type CameraView } from '~/lib/camera'
 import type { FramePerf } from '~/lib/frameMeter'
+import { hasWebGpu } from '~/lib/gpu/gpuTracer'
 import type { Vec3 } from '~/lib/math'
 
 export type ViewMode = '3d' | 'ascii' | 'split' | 'lens'
 type BenchmarkView = '3d' | 'ascii'
 
+/** One run of the benchmark: a view, and for ASCII which renderer draws it. */
+export interface BenchmarkStep {
+  view: BenchmarkView
+  method?: AsciiMethod
+}
+
+/** "3D", "ASCII · CPU", ... */
+export function stepName({ view, method }: BenchmarkStep) {
+  return view === '3d' ? '3D' : `ASCII · ${method === 'shader' ? 'shader' : method?.toUpperCase()}`
+}
+
 /** Seconds per view. The first WARMUP seconds (shader compiles, first trace) aren't counted. */
 const DURATION = 12
 const WARMUP = 2
 
-export interface BenchmarkResult {
-  view: BenchmarkView
+export interface BenchmarkResult extends BenchmarkStep {
   /** What drew it, e.g. "WebGPU" or "8 workers". */
   label: string
   /** Averages over the measured part of the run. */
@@ -23,14 +34,16 @@ export interface BenchmarkResult {
 
 interface BenchmarkState {
   env: string
-  /** Views still to run, the current one first. */
-  queue: BenchmarkView[]
+  /** Steps still to run, the current one first. */
+  queue: BenchmarkStep[]
   results: BenchmarkResult[]
   /** The page to come back to afterwards. */
   returnTo: string
   running: boolean
   /** Seconds into the current view's run, for the progress line. */
   elapsed: number
+  /** The ASCII renderer picked before the benchmark switched between them, to put back. */
+  method: AsciiMethod
 }
 
 export function viewPath(envId: string, mode: ViewMode) {
@@ -55,19 +68,36 @@ function benchmarkView({ position: p, target: t }: CameraView, u: number): Camer
 export function useBenchmark() {
   const state = useState<BenchmarkState | null>('benchmark', () => null)
   const playerKind = usePlayerKind()
+  const { method } = useAsciiSettings()
   const route = useRoute()
+
+  /** Ends a run, finished or not: puts the user's ASCII renderer back. */
+  function end() {
+    if (!state.value) return
+    state.value.running = false
+    method.value = state.value.method
+  }
+
   return {
     state,
-    /** Runs the 3D view, then the ASCII view, then returns to the current page. */
+    /**
+     * Runs the 3D view, then the ASCII view with every renderer this browser has, then returns
+     * to the current page.
+     */
     start(env: Environment) {
       // The player would steer the camera; the benchmark needs it on its own path.
       playerKind.value = null
-      state.value = { env: env.id, queue: ['3d', 'ascii'], results: [], returnTo: route.fullPath, running: true, elapsed: 0 }
+      const queue: BenchmarkStep[] = [
+        { view: '3d' },
+        { view: 'ascii', method: 'cpu' },
+        ...(hasWebGpu() ? [{ view: 'ascii', method: 'gpu' } as const] : []),
+        { view: 'ascii', method: 'shader' },
+      ]
+      state.value = { env: env.id, queue, results: [], returnTo: route.fullPath, running: true, elapsed: 0, method: method.value }
       return navigateTo(viewPath(env.id, '3d'))
     },
-    stop() {
-      if (state.value) state.value.running = false
-    },
+    stop: end,
+    end,
     clear() {
       state.value = null
     },
@@ -81,33 +111,37 @@ export function useBenchmark() {
  * 3D and ASCII pages with the perf and stats their renderer emits.
  */
 export function useBenchmarkRun(env: Environment, view: BenchmarkView, perf: Ref<FramePerf | undefined>, stats: Ref<string | undefined>) {
-  const { state } = useBenchmark()
+  const { state, end } = useBenchmark()
+  const { method } = useAsciiSettings()
   const camera = useCameraView(env)
   let frameId = 0
   let samples: FramePerf[] = []
   let measuring = false
   let done = false
 
-  const myTurn = () => !!state.value?.running && state.value.env === env.id && state.value.queue[0] === view
+  const myTurn = () => !!state.value?.running && state.value.env === env.id && state.value.queue[0]?.view === view
 
   function finish() {
     done = true
     const s = state.value!
     const avg = (f: (p: FramePerf) => number) => samples.reduce((n, p) => n + f(p), 0) / Math.max(1, samples.length)
     s.results.push({
-      view,
+      ...s.queue[0]!,
       label: stats.value?.split(' · ').at(-1) ?? '',
       fps: avg(p => p.fps),
       ms: avg(p => p.ms),
       worstFps: Math.min(...samples.map(p => p.fps)),
     })
     s.queue.shift()
-    if (!s.queue.length) s.running = false
-    return navigateTo(s.queue.length ? viewPath(env.id, s.queue[0]!) : s.returnTo)
+    if (!s.queue.length) end()
+    return navigateTo(s.queue.length ? viewPath(env.id, s.queue[0]!.view) : s.returnTo)
   }
 
   function begin() {
     done = false
+    // Switching renderer swaps the ASCII view's component; the warmup covers its start.
+    const step = state.value!.queue[0]!
+    if (step.method) method.value = step.method
     const start = structuredClone(env.camera ?? DEFAULT_VIEW)
     const t0 = performance.now()
     samples = []
@@ -133,12 +167,13 @@ export function useBenchmarkRun(env: Environment, view: BenchmarkView, perf: Ref
     if (measuring && p) samples.push(p)
   })
 
-  // Starting the benchmark from this very page doesn't remount it, so watch instead of onMounted.
-  watch(myTurn, turn => turn && begin(), { immediate: true })
+  // Starting the benchmark from this very page, or two ASCII steps in a row, doesn't remount
+  // the page, so watch for each new step instead of relying on onMounted.
+  watch(() => (myTurn() ? state.value!.queue.length : 0), steps => steps && begin(), { immediate: true })
 
   onBeforeUnmount(() => {
     cancelAnimationFrame(frameId)
     // Left the page some other way mid-run: that's a cancel.
-    if (myTurn() && !done) state.value!.running = false
+    if (myTurn() && !done) end()
   })
 }

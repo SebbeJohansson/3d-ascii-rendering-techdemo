@@ -20,7 +20,6 @@ const { time: timeOfDay, cycling } = useTimeOfDay()
 const benchmark = useBenchmark()
 /** The benchmark for this environment, running or finished. */
 const run = computed(() => (benchmark.state.value?.env === props.env.id ? benchmark.state.value : null))
-const viewName = (view: string) => (view === '3d' ? '3D' : 'ASCII')
 
 function randomize() {
   seed.value = Math.floor(Math.random() * 1e6)
@@ -98,14 +97,14 @@ function randomize() {
     </p>
     <template v-if="run?.running">
       <p class="keys">
-        Benchmarking {{ viewName(run.queue[0]!) }} · {{ Math.floor(run.elapsed) }} / {{ benchmark.duration }} s
+        Benchmarking {{ stepName(run.queue[0]!) }} · {{ Math.floor(run.elapsed) }} / {{ benchmark.duration }} s
       </p>
       <button type="button" class="secondary" @click="benchmark.stop()">
         Stop benchmark
       </button>
     </template>
     <button v-else type="button" class="secondary" @click="benchmark.start(env)">
-      Benchmark 3D vs ASCII
+      Benchmark 3D vs ASCII renderers
     </button>
     <div v-if="run && !run.running && run.results.length" class="results">
       <table>
@@ -113,8 +112,8 @@ function randomize() {
           <tr><th /><th>fps</th><th>ms</th><th>worst</th></tr>
         </thead>
         <tbody>
-          <tr v-for="r in run.results" :key="r.view">
-            <th>{{ viewName(r.view) }} <small>{{ r.label }}</small></th>
+          <tr v-for="r in run.results" :key="stepName(r)">
+            <th>{{ stepName(r) }} <small>{{ r.label }}</small></th>
             <td>{{ Math.round(r.fps) }}</td>
             <td>{{ r.ms.toFixed(1) }}</td>
             <td>{{ Math.round(r.worstFps) }}</td>
@@ -122,7 +121,7 @@ function randomize() {
         </tbody>
       </table>
       <p class="keys">
-        {{ run.queue.length ? 'Stopped early. ' : '' }}Same camera path, seed and size for both. 3D ms is CPU time only; the GPU's share isn't measurable here.
+        {{ run.queue.length ? 'Stopped early. ' : '' }}Same camera path, seed and size for all. For 3D and shader ASCII, ms is the CPU's part only: the GPU's isn't measurable here.
       </p>
       <button type="button" class="link" @click="benchmark.clear()">
         Clear results

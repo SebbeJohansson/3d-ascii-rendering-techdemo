@@ -56,7 +56,15 @@ It runs on the CPU without a 3D engine. The code is in `app/lib/`:
 - `outlines.ts` finds silhouettes, depth jumps and creases and picks a line character for each.
 - `glyphRenderer.ts` writes pre-rendered glyph masks straight into an `ImageData` buffer. In testing this was about twice as fast as calling `fillText` per character.
 
-The control panel shows fps and frame time, which helps when comparing settings. **Benchmark 3D vs ASCII** flies the camera along the same 12-second path in both views, one after the other, and shows average fps, ms per frame and the worst fps side by side.
+The control panel shows fps and frame time, which helps when comparing settings. **Benchmark 3D vs ASCII renderers** flies the camera along the same 12-second path in the 3D view and then the ASCII view with each renderer below, one after the other, and shows average fps, ms per frame and the worst fps side by side.
+
+### Three ways to make the ASCII view
+
+The ASCII settings pick how the characters are made:
+
+- **CPU**: the ray tracer above, in JavaScript, on the main thread or in Web Workers.
+- **GPU**: the same ray tracer as a WebGPU compute shader (`app/lib/gpu/raytrace.wgsl.ts`), one invocation per character cell. The scene is built on the CPU exactly as for the CPU tracer and uploaded once; only what moves is uploaded per frame. The result is read back into the same per-cell data, so characters, outlines and the lens are drawn the same way. Its output matches the CPU tracer's to within 1 of 255 in color.
+- **Shader**: the usual way ASCII effects are made. The 3D view is rendered as normal and a post-processing shader (`app/lib/gpu/shaderAscii.ts`) cuts the image into cells and picks each cell's character by how dark it is. Nothing is ray traced, so there are no outlines, and characters follow how dark a color looks rather than how much light reaches the surface.
 
 ## Running it locally
 
