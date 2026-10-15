@@ -37,7 +37,7 @@ It runs on the CPU without a 3D engine. The code is in `app/lib/`:
 - `outlines.ts` finds silhouettes, depth jumps and creases and picks a line character for each.
 - `glyphRenderer.ts` writes pre-rendered glyph masks straight into an `ImageData` buffer. In testing this was about twice as fast as calling `fillText` per character.
 
-The control panel shows fps and frame time, which helps when comparing settings.
+The control panel shows fps and frame time, which helps when comparing settings. **Benchmark 3D vs ASCII** flies the camera along the same 12-second path in both views, one after the other, and shows average fps, ms per frame and the worst fps side by side.
 
 ## Running it locally
 

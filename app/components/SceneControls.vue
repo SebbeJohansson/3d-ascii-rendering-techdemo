@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { ENVIRONMENTS, type Environment } from '~/environments'
 import type { FramePerf } from '~/lib/frameMeter'
+import type { ViewMode } from '~/composables/useBenchmark'
 import { getPlayer, PLAYERS } from '~/players'
-
-export type ViewMode = '3d' | 'ascii' | 'split'
 
 const props = defineProps<{
   env: Environment
@@ -16,12 +15,13 @@ const props = defineProps<{
 const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
 
+const benchmark = useBenchmark()
+/** The benchmark for this environment, running or finished. */
+const run = computed(() => (benchmark.state.value?.env === props.env.id ? benchmark.state.value : null))
+const viewName = (view: string) => (view === '3d' ? '3D' : 'ASCII')
+
 function randomize() {
   seed.value = Math.floor(Math.random() * 1e6)
-}
-
-function viewPath(envId: string, mode: ViewMode) {
-  return mode === '3d' ? `/${envId}` : `/${envId}/${mode}`
 }
 </script>
 
@@ -83,6 +83,38 @@ function viewPath(envId: string, mode: ViewMode) {
     <p v-if="perf?.parts" class="perf parts">
       <span v-for="(ms, name) in perf.parts" :key="name">{{ name }} {{ ms.toFixed(1) }}</span>
     </p>
+    <template v-if="run?.running">
+      <p class="keys">
+        Benchmarking {{ viewName(run.queue[0]!) }} · {{ Math.floor(run.elapsed) }} / {{ benchmark.duration }} s
+      </p>
+      <button type="button" class="secondary" @click="benchmark.stop()">
+        Stop benchmark
+      </button>
+    </template>
+    <button v-else type="button" class="secondary" @click="benchmark.start(env)">
+      Benchmark 3D vs ASCII
+    </button>
+    <div v-if="run && !run.running && run.results.length" class="results">
+      <table>
+        <thead>
+          <tr><th /><th>fps</th><th>ms</th><th>worst</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in run.results" :key="r.view">
+            <th>{{ viewName(r.view) }} <small>{{ r.label }}</small></th>
+            <td>{{ Math.round(r.fps) }}</td>
+            <td>{{ r.ms.toFixed(1) }}</td>
+            <td>{{ Math.round(r.worstFps) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="keys">
+        {{ run.queue.length ? 'Stopped early. ' : '' }}Same camera path, seed and size for both. 3D ms is CPU time only; the GPU's share isn't measurable here.
+      </p>
+      <button type="button" class="link" @click="benchmark.clear()">
+        Clear results
+      </button>
+    </div>
   </aside>
 </template>
 
@@ -159,6 +191,53 @@ nav .active {
 .perf.parts {
   font-weight: 400;
   color: #555;
+}
+
+.secondary {
+  padding: 7px;
+  border: 1px solid #2b5d8a;
+  border-radius: 6px;
+  background: white;
+  color: #2b5d8a;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+table {
+  border-collapse: collapse;
+  font: 12px ui-monospace, Menlo, Consolas, monospace;
+}
+
+th, td {
+  padding: 2px 4px;
+  text-align: right;
+}
+
+tbody th {
+  text-align: left;
+}
+
+small {
+  display: block;
+  font-weight: 400;
+  color: #777;
+}
+
+.link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: #2b5d8a;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .keys {

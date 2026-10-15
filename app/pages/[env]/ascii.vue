@@ -14,6 +14,7 @@ usePlayerDriver(env.value)
 const ascii = reactive(useAsciiSettings())
 const stats = ref<string>()
 const perf = ref<FramePerf>()
+useBenchmarkRun(env.value, 'ascii', perf, stats)
 const grid = ref<{ cols: number, rows: number }>()
 </script>
 

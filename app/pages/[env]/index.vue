@@ -13,6 +13,7 @@ const { seed, size } = useSceneSettings(env.value)
 usePlayerDriver(env.value)
 const stats = ref<string>()
 const perf = ref<FramePerf>()
+useBenchmarkRun(env.value, '3d', perf, stats)
 </script>
 
 <template>
