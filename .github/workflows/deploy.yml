@@ -22,8 +22,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: yarn
-      - run: yarn install --frozen-lockfile
+      # Yarn 4, the version pinned in package.json's packageManager. The runner's own yarn is 1.x,
+      # which can't read this lockfile.
+      - run: corepack enable
+      - run: yarn install --immutable
       - run: yarn generate
         env:
           NUXT_APP_BASE_URL: /${{ github.event.repository.name }}/

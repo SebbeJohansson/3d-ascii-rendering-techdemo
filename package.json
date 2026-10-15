@@ -2,6 +2,7 @@
   "name": "3d-models-test",
   "private": true,
   "type": "module",
+  "packageManager": "yarn@4.18.0",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",

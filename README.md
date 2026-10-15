@@ -41,7 +41,7 @@ The control panel shows fps and frame time, which helps when comparing settings.
 
 ## Running it locally
 
-Needs Node 24 and Yarn 1.
+Needs Node 24 and Yarn 4. Run `corepack enable` once to get the Yarn version pinned in `package.json`.
 
 ```bash
 yarn install
