@@ -22,6 +22,44 @@ export interface Bvh {
 }
 
 const LEAF_SIZE = 4
+/** Candidate split planes per axis for the surface area heuristic, plus one. */
+const BINS = 16
+const binCounts = new Uint32Array(BINS)
+const binBounds = new Float64Array(BINS * 6)
+const leftAreas = new Float64Array(BINS)
+const rightAreas = new Float64Array(BINS)
+const leftCounts = new Uint32Array(BINS)
+const rightCounts = new Uint32Array(BINS)
+
+/**
+ * Accumulates bins from `from` in direction `step`: area[b] and count[b] are the surface area
+ * and triangle count of bins from..b together.
+ */
+function sweep(from: number, step: number, area: Float64Array, count: Uint32Array) {
+  let minX = Infinity
+  let minY = Infinity
+  let minZ = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  let maxZ = -Infinity
+  let n = 0
+  for (let b = from; b >= 0 && b < BINS; b += step) {
+    n += binCounts[b]!
+    if (binCounts[b]) {
+      minX = Math.min(minX, binBounds[b * 6]!)
+      minY = Math.min(minY, binBounds[b * 6 + 1]!)
+      minZ = Math.min(minZ, binBounds[b * 6 + 2]!)
+      maxX = Math.max(maxX, binBounds[b * 6 + 3]!)
+      maxY = Math.max(maxY, binBounds[b * 6 + 4]!)
+      maxZ = Math.max(maxZ, binBounds[b * 6 + 5]!)
+    }
+    const x = maxX - minX
+    const y = maxY - minY
+    const z = maxZ - minZ
+    area[b] = n ? x * y + y * z + z * x : 0
+    count[b] = n
+  }
+}
 
 export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
   const triCount = indices.length / 3
@@ -65,27 +103,63 @@ export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
     bounds.set([...lo, ...hi], node * 6)
 
     const extents = [0, 1, 2].map(axis => chi[axis]! - clo[axis]!)
-    const axis = extents.indexOf(Math.max(...extents))
-    if (count <= LEAF_SIZE || extents[axis] === 0) {
+    if (count <= LEAF_SIZE || Math.max(...extents) === 0) {
       nodes[node * 2] = first
       nodes[node * 2 + 1] = count
       continue
     }
 
-    // Split at the middle of the widest axis: triangles with centroids below go left.
-    const mid = (clo[axis]! + chi[axis]!) / 2
-    let i = first
-    let j = first + count - 1
-    while (i <= j) {
-      if (centroids[order[i]! * 3 + axis]! < mid) i++
-      else {
-        const tmp = order[i]!
-        order[i] = order[j]!
-        order[j--] = tmp
+    // Split where the surface area heuristic says rays will test the fewest triangles:
+    // bin the centroids along each axis, and weigh each candidate plane's two halves by
+    // their box areas (how likely a ray is to enter them) times their triangle counts.
+    let bestAxis = -1
+    let bestPlane = 0
+    let bestCost = Infinity
+    for (let axis = 0; axis < 3; axis++) {
+      if (extents[axis] === 0) continue
+      binCounts.fill(0)
+      binBounds.fill(Infinity)
+      for (let b = 0; b < BINS; b++) for (let c = 3; c < 6; c++) binBounds[b * 6 + c] = -Infinity
+      const scale = BINS / extents[axis]!
+      for (let i = first; i < first + count; i++) {
+        const t = order[i]!
+        const b = Math.min(BINS - 1, Math.floor((centroids[t * 3 + axis]! - clo[axis]!) * scale))
+        binCounts[b]!++
+        for (let c = 0; c < 3; c++) {
+          binBounds[b * 6 + c] = Math.min(binBounds[b * 6 + c]!, triBounds[t * 6 + c]!)
+          binBounds[b * 6 + 3 + c] = Math.max(binBounds[b * 6 + 3 + c]!, triBounds[t * 6 + 3 + c]!)
+        }
+      }
+      // Sweep from the right to get each plane's right-hand area and count, then from the left.
+      sweep(BINS - 1, -1, rightAreas, rightCounts)
+      sweep(0, 1, leftAreas, leftCounts)
+      for (let plane = 1; plane < BINS; plane++) {
+        const cost = leftAreas[plane - 1]! * leftCounts[plane - 1]! + rightAreas[plane]! * rightCounts[plane]!
+        if (leftCounts[plane - 1]! && rightCounts[plane]! && cost < bestCost) {
+          bestCost = cost
+          bestAxis = axis
+          bestPlane = plane
+        }
       }
     }
-    let leftCount = i - first
-    // Every centroid on one side (can happen with many identical centroids): split in half.
+
+    let leftCount = count >> 1
+    if (bestAxis >= 0) {
+      const axis = bestAxis
+      const scale = BINS / extents[axis]!
+      let i = first
+      let j = first + count - 1
+      while (i <= j) {
+        if (Math.min(BINS - 1, Math.floor((centroids[order[i]! * 3 + axis]! - clo[axis]!) * scale)) < bestPlane) i++
+        else {
+          const tmp = order[i]!
+          order[i] = order[j]!
+          order[j--] = tmp
+        }
+      }
+      leftCount = i - first
+    }
+    // Every centroid in one bin (many identical centroids): split in half.
     if (leftCount === 0 || leftCount === count) leftCount = count >> 1
 
     const left = nodeCount
