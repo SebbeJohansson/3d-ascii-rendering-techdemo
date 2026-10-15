@@ -1,19 +1,19 @@
 import { dragon as dragonEnvironment, flapWings } from '../environments/dragon'
 import type { Player } from './types'
 
-/** Mesh detail for the rideable dragon. It is shrunk to a quarter, so finer detail is wasted. */
+/** Mesh detail for the rideable dragon. It is shrunk a lot, so finer detail is wasted. */
 const DETAIL = 2
 
 /** The dragon from the dragon environment, shrunk to ride over cities and forests. */
 export const dragon: Player = {
   id: 'dragon',
   name: 'Dragon',
-  scale: 0.25,
+  scale: 0.18,
   flies: true,
   speed: 70,
   acceleration: 40,
   turnRate: 1.4,
-  camera: { distance: 42, height: 14, lookHeight: 10 },
+  camera: { distance: 32, height: 11, lookHeight: 7 },
 
   build(seed) {
     // A different seed than the environment's, so a dragon ridden past the dragon
