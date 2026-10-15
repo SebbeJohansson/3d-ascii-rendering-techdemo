@@ -7,6 +7,9 @@
  * foot, Alacritty) are asked to also report releases, which then end a hold right away.
  * Releases only ever shorten a hold: some terminals say they support the protocol but never
  * send them, and a key must not stay down forever.
+ *
+ * Pasted text is ignored. Some terminals paste on right-click (VS Code on Windows does), and a
+ * pasted command would otherwise read as a burst of key presses.
  */
 
 const ESC = '\x1b['
@@ -42,6 +45,11 @@ const ARROWS: Record<string, string> = { A: 'up', B: 'down', C: 'right', D: 'lef
 const TOKEN = /\x1b\[[?<>]?[\d;:]*[A-Za-z~]|\x1bO[A-D]|\x1b|[\s\S]/g
 // An escape sequence cut off at the end of a chunk; the rest comes with the next one.
 const PARTIAL = /\x1b(\[[?<>]?[\d;:]*)?$/
+// Bracketed paste: the terminal wraps pasted text in these.
+const PASTE_START = '\x1b[200~'
+const PASTE_END = '\x1b[201~'
+/** Without bracketed paste: this many plain characters arriving at once can only be a paste. */
+const PASTE_LENGTH = 4
 
 export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { onKey, onMouse, onRaw }: InputHandlers) {
   /** Key name → time (ms) until which it counts as held. */
@@ -50,6 +58,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
   let kitty = false
   let releases = false
   let pending = ''
+  let pasting = false
 
   function press(name: string, repeat: boolean) {
     const now = performance.now()
@@ -64,6 +73,9 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
 
   function token(t: string) {
     onRaw?.(t)
+    if (t === PASTE_START) pasting = true
+    else if (t === PASTE_END) pasting = false
+    if (pasting || t === PASTE_END) return
     // Kitty protocol: CSI code[:alternates] ; modifiers[:event] u, or CSI 1 ; mods:event A-D.
     let m = /^\x1b\[(\d+)(?::[\d:]*)?(?:;(\d+)(?::(\d))?)?([uABCD~])$/.exec(t)
     if (m && (m[4] === 'u' || m[3])) {
@@ -112,7 +124,14 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
     const cut = PARTIAL.exec(text)
     // A lone ESC at the end is the Escape key, not the start of a sequence.
     pending = cut && cut[0] !== '\x1b' ? cut[0] : ''
-    for (const [t] of (pending ? text.slice(0, -pending.length) : text).matchAll(TOKEN)) token(t)
+    const complete = pending ? text.slice(0, -pending.length) : text
+    // Typing and key repeat send a character at a time; a run of plain text is a paste from a
+    // terminal without bracketed paste.
+    if (!complete.includes('\x1b') && complete.length >= PASTE_LENGTH) {
+      onRaw?.(`(ignored paste) ${complete}`)
+      return
+    }
+    for (const [t] of complete.matchAll(TOKEN)) token(t)
   }
 
   function start() {
@@ -122,12 +141,13 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
     // Mouse: report presses, releases and drags (1002), in the SGR format (1006). Then ask
     // whether the kitty keyboard protocol is supported; the DA1 query (CSI c) after it gets
     // a reply from every terminal, so an unsupported one just answers that.
-    stdout.write(`${ESC}?1002h${ESC}?1006h${ESC}?u${ESC}c`)
+    // Bracketed paste (2004) marks pasted text, so it can be ignored.
+    stdout.write(`${ESC}?1002h${ESC}?1006h${ESC}?2004h${ESC}?u${ESC}c`)
   }
 
   function stop() {
     if (kitty) stdout.write(`${ESC}<u`)
-    stdout.write(`${ESC}?1006l${ESC}?1002l`)
+    stdout.write(`${ESC}?2004l${ESC}?1006l${ESC}?1002l`)
     stdin.off('data', onData)
     stdin.setRawMode(false)
     stdin.pause()
