@@ -51,6 +51,10 @@ onMounted(async () => {
   controls = createOrbitControls(camera, renderer.domElement, view)
   rebuild()
 
+  // Dev only: lets the browser console reach the live scene, e.g.
+  // __scene.traverse(o => o.material?.color?.set('hotpink'))
+  if (import.meta.dev) Object.assign(window, { __scene: scene, __camera: camera, __renderer: renderer })
+
   resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(container.value!)
   resize()
@@ -86,6 +90,9 @@ watch(view, ({ position, target }) => {
 
 onBeforeUnmount(() => {
   unmounted = true
+  if (import.meta.dev && (window as { __scene?: unknown }).__scene === scene) {
+    Object.assign(window, { __scene: undefined, __camera: undefined, __renderer: undefined })
+  }
   resizeObserver?.disconnect()
   renderer?.setAnimationLoop(null)
   controls?.dispose()
