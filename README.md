@@ -36,9 +36,9 @@ yarn ascii forest --seed 42
 yarn ascii --help       # every option
 ```
 
-`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `N` makes a new world and `Esc` quits. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `Tab` switches to the next environment, `N` makes a new world and `Esc` quits. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
 
-Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor.
+Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor. The status line says which one your terminal does. If input misbehaves, `--log-input FILE` records everything the terminal sends.
 
 ## How the ASCII renderer works
 

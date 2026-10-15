@@ -35,7 +35,7 @@ export interface InputHandlers {
 }
 
 // Kitty protocol key codes for keys that have no character.
-const KITTY_KEYS: Record<number, string> = { 27: 'escape', 32: 'space', 13: 'enter', 57441: 'shift', 57447: 'shift' }
+const KITTY_KEYS: Record<number, string> = { 9: 'tab', 27: 'escape', 32: 'space', 13: 'enter', 57441: 'shift', 57447: 'shift' }
 const ARROWS: Record<string, string> = { A: 'up', B: 'down', C: 'right', D: 'left' }
 // Escape sequences, mouse reports, or any single character. The leading ? < > cover replies
 // from the terminal and SGR mouse reports.
@@ -72,6 +72,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
       const event = Number(m[3] ?? 1)
       let name = m[4] === 'u' ? KITTY_KEYS[code] ?? String.fromCodePoint(code).toLowerCase() : ARROWS[m[4]!]!
       if (mods & 4 && name.length === 1) name = `ctrl+${name}`
+      if (mods & 1 && name === 'tab') name = 'shift+tab'
       if (event === 3) {
         releases = true
         release(name)
@@ -99,6 +100,8 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
     // Legacy keys: arrows, Ctrl+C, a lone escape, plain characters.
     if ((m = /^\x1b[[O]([A-D])$/.exec(t))) return press(ARROWS[m[1]!]!, false)
     if (t === '\x03') return press('ctrl+c', false)
+    if (t === '\t') return press('tab', false)
+    if (t === '\x1b[Z') return press('shift+tab', false)
     if (t === '\x1b') return press('escape', false)
     if (t === ' ') return press('space', false)
     if (t.length === 1 && t >= ' ') press(t.toLowerCase(), false)

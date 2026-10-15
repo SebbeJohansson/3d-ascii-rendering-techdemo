@@ -5,7 +5,7 @@
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { parseArgs } from 'node:util'
-import { ENVIRONMENTS, findEnvironment } from '../app/environments'
+import { ENVIRONMENTS, findEnvironment, type Environment } from '../app/environments'
 import { CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
@@ -51,15 +51,16 @@ const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
-      Space/Shift dragon up/down · N new world · O outlines · B backgrounds · Esc quit
+      Space/Shift dragon up/down · Tab next environment · N new world · O outlines
+      B backgrounds · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom.`
 
 if (values.help) {
   console.log(USAGE)
   process.exit(0)
 }
-const env = findEnvironment(positionals[0] ?? 'city')
-if (!env) {
+const startEnv = findEnvironment(positionals[0] ?? 'city')
+if (!startEnv) {
   console.error(`Unknown environment "${positionals[0]}".\n\n${USAGE}`)
   process.exit(1)
 }
@@ -68,7 +69,8 @@ if (!process.stdout.isTTY || !process.stdin.isTTY) {
   process.exit(1)
 }
 
-const size = values.size ? Number(values.size) : env.size.default
+let env: Environment = startEnv
+let size = values.size ? Number(values.size) : env.size.default
 const workerCount = values.workers ? Number(values.workers) : Math.max(1, Math.min(8, availableParallelism() - 1))
 const style = { outlines: values.outlines, cellBackground: values.backgrounds, color: values.color, stretch: false, fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(env.sky) }
 
@@ -119,7 +121,7 @@ function status() {
     ? `WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
     : 'WASD/arrows look · Q/E zoom'
   const releases = input.releases ? 'key releases on' : 'key repeat'
-  return ` ${env!.id} · seed ${seed} · ${summary} · ${cols}×${rows} · ${workerCount} threads · ${fps} · ${releases} │ ${riding}: ${keys} · 1 orbit 2 dragon 3 car · N new · Esc quit`
+  return ` ${env.id} · seed ${seed} · ${summary} · ${cols}×${rows} · ${workerCount} threads · ${fps} · ${releases} │ ${riding}: ${keys} · 1 orbit 2 dragon 3 car · Tab scene · N new · Esc quit`
 }
 
 function resize() {
@@ -144,20 +146,39 @@ function spawn(kind: PlayerKind | null) {
   chase = defaultChase(player)
   if (pose && previous) pose = swapPose(pose, player, world)
   else {
-    pose = spawnPose(env!, size, view, player, world)
+    pose = spawnPose(env, size, view, player, world)
     motion.speed = 0
     motion.cameraHeading = pose.heading
   }
 }
 
-function newWorld() {
-  seed = Math.floor(Math.random() * 1e6)
-  world = env!.generate(seed, size)
-  tracer.setScene(env!.id, seed, size)
-  // A new color for the player too, and somewhere it fits in the new world.
+/** Builds the current environment for `seed` and puts the player somewhere it fits. */
+function rebuild() {
+  world = env.generate(seed, size)
+  tracer.setScene(env.id, seed, size)
+  // A new color for the player too, spawned fresh in the new world.
   const kind = playerKind
   spawn(null)
   spawn(kind)
+}
+
+function newWorld() {
+  seed = Math.floor(Math.random() * 1e6)
+  rebuild()
+}
+
+/** Switches to the next environment (or the previous one, with step -1), at its own size and camera. */
+function cycleEnvironment(step: number) {
+  const i = ENVIRONMENTS.indexOf(env)
+  env = ENVIRONMENTS[(i + step + ENVIRONMENTS.length) % ENVIRONMENTS.length]!
+  size = env.size.default
+  Object.assign(style, { fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(env.sky) })
+  view = structuredClone(env.camera ?? DEFAULT_VIEW)
+  // A new sky color: every cell gets rewritten.
+  screen.resize(cols, rows)
+  // Building can take a moment (the dragon is meshed from scratch), so say so first.
+  screen.status(` Loading ${env.name.toLowerCase()}…`)
+  setImmediate(rebuild)
 }
 
 const logFile = values['log-input']
@@ -177,6 +198,8 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === '2') spawn('dragon')
     else if (name === '3') spawn('car')
     else if (name === 'n') newWorld()
+    else if (name === 'tab') cycleEnvironment(1)
+    else if (name === 'shift+tab') cycleEnvironment(-1)
     else if (name === 'o') style.outlines = !style.outlines
     else if (name === 'b') style.cellBackground = !style.cellBackground
     else return
@@ -234,7 +257,7 @@ function step(dt: number) {
   // orbitView turns a full circle per viewport height of pointer movement.
   if (turn || tilt) view = orbitView(view, -turn * KEY_ORBIT_SPEED * dt * rows, tilt * KEY_ORBIT_SPEED * dt * rows, rows)
   if (zoom) view = zoomView(view, zoom * KEY_ZOOM_SPEED * dt)
-  if (turn || tilt || zoom || env!.animate) dirty = true
+  if (turn || tilt || zoom || env.animate) dirty = true
 }
 
 let last = performance.now()
