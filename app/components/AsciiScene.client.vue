@@ -346,15 +346,7 @@ onBeforeUnmount(() => {
     />
     <canvas v-if="!pixels" ref="glCanvas" class="glyphs" />
     <canvas v-if="!pixels" ref="gpuCanvas" class="glyphs" />
-    <div
-      v-if="inspected"
-      class="inspect"
-      :class="{ left: inspected.x > width / 2 }"
-      :style="{ left: `${inspected.x}px`, top: `${inspected.y}px` }"
-    >
-      <strong>{{ inspected.label }}</strong>
-      <span>{{ Math.round(inspected.distance) }} m away</span>
-    </div>
+    <InspectLabel v-if="inspected" :picked="inspected" :x="inspected.x" :y="inspected.y" :left="inspected.x > width / 2" />
   </div>
 </template>
 
@@ -381,31 +373,5 @@ canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
-}
-
-.inspect {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  transform: translate(12px, 12px);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 0.9);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
-  color: #333;
-  font-size: 13px;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-/* Right half: open toward the left, so it stays on screen. */
-.inspect.left {
-  transform: translate(calc(-100% - 12px), 12px);
-}
-
-.inspect span {
-  font-size: 12px;
-  color: #666;
 }
 </style>

@@ -251,7 +251,10 @@ export function createEnvironmentScene() {
     setPlayer(null, 0)
   }
 
-  return { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, dispose }
+  /** The generated scene on show, which animate() keeps posed. */
+  const generated = () => current?.scene
+
+  return { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, generated, dispose }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

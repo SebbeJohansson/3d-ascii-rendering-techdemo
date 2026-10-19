@@ -5,7 +5,7 @@
  */
 import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
-import type { EnvironmentScene } from '../environments/types'
+import type { Environment, EnvironmentScene } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
 import { buildRaycastPlayer, buildRaycastScene, castRay, placePlayer, renderScene, setLighting, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
@@ -98,6 +98,24 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
     }
   }
   return { label: label ?? 'Something', distance: hit.distance }
+}
+
+/**
+ * Picking for a view drawn without the ray tracer (the 3D view): builds the ray tracer's copy
+ * of the scene on the first pick, and brings moved meshes up to date before each one after.
+ */
+export function createScenePicker() {
+  let built: { generated: EnvironmentScene, scene: RaycastScene } | undefined
+  const player = createPlayerSlot()
+  return {
+    setPlayer: player.set,
+    pick(env: Environment, generated: EnvironmentScene, pose: PlayerPose | undefined, time: number, camera: Camera, u: number, v: number) {
+      if (built?.generated !== generated) built = { generated, scene: buildRaycastScene(env, generated) }
+      else if (env.animate) updateMeshes(built.scene, generated)
+      player.attach(built.scene, pose, time)
+      return pickScene(env.id, generated, built.scene, player.name, camera, u, v)
+    },
+  }
 }
 
 /** The ray tracer's copy of the spawned player, kept apart from the environment's scene. */

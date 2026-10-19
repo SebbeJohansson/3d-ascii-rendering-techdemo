@@ -11,7 +11,8 @@ import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environmen
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
-import type { TracedFrame } from '../app/lib/tracers'
+import type { Picked, TracedFrame } from '../app/lib/tracers'
+import type { Camera } from '../app/lib/raycaster'
 import { getPlayer, type PlayerKind, type PlayerPose } from '../app/players'
 import { createInput, type MouseEvent } from './input'
 import { createScreen, type Resolution } from './screen'
@@ -180,6 +181,7 @@ function statusBar(loading?: string) {
   const releases = input.releases ? 'key releases' : 'key repeat'
   const what = loading ? `loading ${loading}…` : summary
   const clock = `${formatTimeOfDay(timeOfDay)}${cycling ? ' ↻' : ''}`
+  if (inspected) return ` ▸ ${inspected.label} · ${Math.round(inspected.distance)} m away │ ${env.name} · ${what} · ${clock} · seed ${seed}`
   return ` ${env.name} · ${what} · ${clock} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${fps} · ${releases}`
 }
 
@@ -288,19 +290,41 @@ const input = createInput(process.stdin, process.stdout, {
   onMouse,
 })
 
-let drag: { x: number, y: number, pan: boolean } | undefined
+let drag: { x: number, y: number, pan: boolean, moved: boolean } | undefined
+/** What the last click landed on, shown in the status bar until the next press. */
+let inspected: Picked | undefined
+/** The camera of the last frame sent to the tracer: a click picks in what is on screen. */
+let lastCamera: Camera | undefined
+
+/** Names what is under cell (x, y) of the terminal, in the status bar. */
+async function inspect(x: number, y: number) {
+  // Terminal row 0 is the status bar; the frame starts below it.
+  const v = (y - 1 + 0.5) / rows
+  if (!lastCamera || v < 0 || v > 1) return
+  inspected = (await tracer.pick(lastCamera, (x + 0.5) / cols, v)) ?? undefined
+  showBars()
+}
 
 function onMouse(e: MouseEvent) {
   if (values.benchmark) return
+  if (inspected && (e.kind === 'down' || e.kind === 'wheel')) {
+    inspected = undefined
+    showBars()
+  }
   if (e.kind === 'wheel') {
     if (pose) zoomChase(chase, e.delta * 100)
     else view = zoomView(view, e.delta * 100)
     dirty = true
     return
   }
-  if (e.kind === 'down') drag = { x: e.x, y: e.y, pan: e.button === 2 }
-  else if (e.kind === 'up') drag = undefined
+  if (e.kind === 'down') drag = { x: e.x, y: e.y, pan: e.button === 2, moved: false }
+  else if (e.kind === 'up') {
+    // A left press that never left its cell is a click.
+    if (drag && !drag.pan && !drag.moved) void inspect(e.x, e.y)
+    drag = undefined
+  }
   else if (drag) {
+    drag.moved ||= e.x !== drag.x || e.y !== drag.y
     // Cells are narrow: scale both directions to the pointer movement of square pixels.
     const dx = e.x - drag.x
     const dy = (e.y - drag.y) * CELL_ASPECT
@@ -369,7 +393,8 @@ function tick() {
     if (drainSince !== undefined) drainMs += now - drainSince
     drainSince = undefined
     dirty = false
-    tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
+    lastCamera = { position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }
+    tracer.render(lastCamera, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
   }
   timer = setTimeout(tick, TICK_MS)
 }
