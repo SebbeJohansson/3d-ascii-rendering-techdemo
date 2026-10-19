@@ -17,4 +17,3 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 
 - [x] **GPU ray tracing.** Port the ray tracer to a WebGPU compute shader, with a CPU/GPU toggle and fps side by side. ~half a day
 - [ ] **Click to inspect.** Click a building or tree to see what it is; the ray tracer already knows what each cell hit. ~45 min
-- [ ] **Export ASCII.** Copy the current frame as plain text, or record a GIF. ~30–45 min
