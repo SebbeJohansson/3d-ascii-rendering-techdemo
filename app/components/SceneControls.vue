@@ -138,6 +138,8 @@ function randomize() {
   /* Scrolls when the settings don't fit, e.g. the lens view's on a short window. */
   max-height: calc(100% - 32px);
   overflow-y: auto;
+  /* Never sideways: a row that doesn't fit wraps instead (see nav). */
+  overflow-x: hidden;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -153,6 +155,8 @@ function randomize() {
 /* :deep so settings components in the slot (LensSettings) get the same tabs. */
 .panel :deep(nav) {
   display: flex;
+  /* Five environments don't fit on one row; they wrap onto a second. */
+  flex-wrap: wrap;
   gap: 4px;
   padding: 3px;
   background: rgb(0 0 0 / 0.08);
@@ -161,7 +165,7 @@ function randomize() {
 
 .panel :deep(nav a),
 .panel :deep(nav button) {
-  flex: 1;
+  flex: 1 0 auto;
   padding: 5px;
   border: 0;
   background: none;
