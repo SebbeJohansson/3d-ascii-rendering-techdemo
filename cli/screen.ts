@@ -1,7 +1,7 @@
 /**
- * Draws traced frames into the terminal with ANSI escape codes, in 24-bit color (or the
- * 256-color palette where that isn't supported), between a status bar on top and a key bar at
- * the bottom. Only cells that changed since the last frame are rewritten, which keeps the
+ * Draws traced frames into the terminal with ANSI escape codes, in as many colors as the
+ * terminal shows (24-bit, the 256-color palette, the 16 basic colors, or none), between a status
+ * bar on top and a key bar at the bottom. Only cells that changed since the last frame are rewritten, which keeps the
  * output small enough for 30+ fps.
  *
  * Two resolutions:
@@ -25,10 +25,62 @@ export interface ScreenOptions extends StyleOptions {
   sky: readonly number[]
 }
 
+/** How many colors to draw in. 'none' is characters only, in the terminal's own colors. */
+export type ColorDepth = '24bit' | '256' | '16' | 'none'
+export const COLOR_DEPTHS: readonly ColorDepth[] = ['24bit', '256', '16', 'none']
+export const COLOR_DEPTH_NAMES: Record<ColorDepth, string> = { '24bit': '24-bit color', '256': '256 colors', '16': '16 colors', 'none': 'no color' }
+
+/** The most colors the terminal shows. Node reads NO_COLOR, FORCE_COLOR, TERM and COLORTERM. */
+export function detectColorDepth(out: NodeJS.WriteStream): ColorDepth {
+  if (out.hasColors(2 ** 24)) return '24bit'
+  if (out.hasColors(256)) return '256'
+  if (out.hasColors(16)) return '16'
+  return 'none'
+}
+
 /** Nearest color in the 256-color palette's 6×6×6 cube. */
-function cube(r: number, g: number, b: number) {
+function cube(rgb: number) {
   const level = (c: number) => (c < 48 ? 0 : c < 115 ? 1 : Math.min(5, Math.floor((c - 35) / 40)))
-  return 16 + 36 * level(r) + 6 * level(g) + level(b)
+  return 16 + 36 * level(rgb >>> 16) + 6 * level((rgb >>> 8) & 255) + level(rgb & 255)
+}
+
+/** The 16 basic colors as xterm shows them by default. Themes change them, so this is a guess. */
+const BASIC = [
+  0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x0000EE, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
+  0x7F7F7F, 0xFF0000, 0x00FF00, 0xFFFF00, 0x5C5CFF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
+]
+
+/**
+ * Nearest of the first `count` basic colors, per color at 5 bits a channel, looked up rather
+ * than searched for every cell.
+ */
+function basicTable(count: number) {
+  const table = new Uint8Array(1 << 15)
+  for (let i = 0; i < table.length; i++) {
+    const [r, g, b] = [(i >> 10) * 8 + 4, ((i >> 5) & 31) * 8 + 4, (i & 31) * 8 + 4]
+    let best = Infinity
+    for (let k = 0; k < count; k++) {
+      const c = BASIC[k]!
+      const d = 2 * (r - (c >>> 16)) ** 2 + 4 * (g - ((c >>> 8) & 255)) ** 2 + 3 * (b - (c & 255)) ** 2
+      if (d < best) {
+        best = d
+        table[i] = k
+      }
+    }
+  }
+  return (rgb: number) => table[((rgb >>> 19) << 10) | (((rgb >>> 11) & 31) << 5) | ((rgb >>> 3) & 31)]!
+}
+
+/**
+ * Turns colors into what gets written for them: the color itself in 24-bit, else a palette
+ * index. Backgrounds get only the first 8 basic colors: the Linux console has no bright ones.
+ */
+function createPalette(depth: ColorDepth) {
+  const identity = (rgb: number) => rgb
+  if (depth === '24bit') return { fg: identity, bg: identity }
+  if (depth === '256') return { fg: cube, bg: cube }
+  if (depth === 'none') return { fg: () => 0, bg: () => 0 }
+  return { fg: basicTable(16), bg: basicTable(8) }
 }
 
 const pack = (c: Uint8Array, o: number) => (c[o]! << 16) | (c[o + 1]! << 8) | c[o + 2]!
@@ -85,28 +137,34 @@ function createByteWriter() {
       num(x)
       buf[len++] = 0x48
     },
-    /** CSI 38;2;r;g;b m (or 48 for the background), or CSI 38;5;n m in 256 colors. */
-    color(layer: 38 | 48, rgb: number, trueColor: boolean) {
+    /**
+     * A color createPalette() made: CSI 38;2;r;g;b m (or 48 for the background) in 24-bit,
+     * CSI 38;5;n m in 256 colors, CSI 3n m / 9n m (4n m) in 16. Nothing without color.
+     */
+    color(layer: 38 | 48, code: number, depth: ColorDepth) {
+      if (depth === 'none') return
       buf[len++] = BYTE_ESC
       buf[len++] = BYTE_BRACKET
+      if (depth === '16') {
+        num(code < 8 ? layer - 8 + code : layer + 52 + code - 8)
+        buf[len++] = 0x6D
+        return
+      }
       num(layer)
       buf[len++] = BYTE_SEMI
-      const r = rgb >>> 16
-      const g = (rgb >>> 8) & 255
-      const b = rgb & 255
-      if (trueColor) {
+      if (depth === '24bit') {
         buf[len++] = 0x32
         buf[len++] = BYTE_SEMI
-        num(r)
+        num(code >>> 16)
         buf[len++] = BYTE_SEMI
-        num(g)
+        num((code >>> 8) & 255)
         buf[len++] = BYTE_SEMI
-        num(b)
+        num(code & 255)
       }
       else {
         buf[len++] = 0x35
         buf[len++] = BYTE_SEMI
-        num(cube(r, g, b))
+        num(code)
       }
       buf[len++] = 0x6D
     },
@@ -115,7 +173,11 @@ function createByteWriter() {
   }
 }
 
-export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
+export function createScreen(out: NodeJS.WriteStream) {
+  let depth: ColorDepth = '24bit'
+  let palette = createPalette(depth)
+  /** Whether two colors look the same. Only 24-bit has shades close enough to skip. */
+  let same = near
   let cols = 0
   /** Terminal rows the frame takes, between the two bars. */
   let rows = 0
@@ -136,10 +198,13 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
   const traced = () => ({ cols, rows: resolution === 'blocks' ? rows * 2 : rows })
 
   /**
-   * Sizes the frame for a terminal of `columns` × `lines` (the bars take a line each) and
-   * forgets what was on screen. Returns the grid to trace.
+   * Sizes the frame for a terminal of `columns` × `lines` (the bars take a line each), in `colors`,
+   * and forgets what was on screen. Returns the grid to trace.
    */
-  function resize(columns: number, lines: number, res: Resolution) {
+  function resize(columns: number, lines: number, res: Resolution, colors: ColorDepth) {
+    if (colors !== depth) palette = createPalette(colors)
+    depth = colors
+    same = depth === '24bit' ? near : (a: number, b: number) => a === b
     cols = columns
     rows = Math.max(1, lines - 2)
     resolution = res
@@ -185,18 +250,22 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         let glyph: Uint8Array
         if (blocks) {
           const top = pixel(cells, 2 * y * cols + x, options, sky)
-          cellBg = pixel(cells, (2 * y + 1) * cols + x, options, sky)
+          const bottom = pixel(cells, (2 * y + 1) * cols + x, options, sky)
+          cellBg = palette.bg(bottom)
           // Both halves alike: a plain space on the background says the same in fewer bytes.
-          packed = top === cellBg ? 0 : (BLOCK | top) >>> 0
-          glyph = top === cellBg ? GLYPH_BYTES[0]! : UPPER_HALF_BYTES
+          packed = top === bottom ? 0 : (BLOCK | palette.fg(top)) >>> 0
+          glyph = top === bottom ? GLYPH_BYTES[0]! : UPPER_HALF_BYTES
         }
         else {
           const g = glyphs[i]!
           cellColors(cells.rgb, i, edgeStrength[i]!, options, 1, options.sky, colors)
           // Rays that hit nothing have no color of their own: show the sky.
           if (!g) colors.set(options.sky, 3)
-          packed = (g * 0x1000000 + (g ? pack(colors, 0) : 0)) >>> 0
-          cellBg = pack(colors, 3)
+          cellBg = palette.bg(pack(colors, 3))
+          let fgCode = g ? palette.fg(pack(colors, 0)) : 0
+          // In 16 colors a shade often lands on its own background: the bright one stays readable.
+          if (depth === '16' && fgCode === cellBg) fgCode = cellBg + 8
+          packed = (g * 0x1000000 + fgCode) >>> 0
           glyph = GLYPH_BYTES[g]!
         }
         const glyphBits = (packed & BLOCK) >>> 0
@@ -204,13 +273,13 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         // On screen already, give or take a shade. The shown colors are what was actually
         // written, so skipped changes never add up to more than NEAR.
         const shown = shownFg[i]!
-        if (shownBg[i] !== UNKNOWN && (shown & BLOCK) >>> 0 === glyphBits && near(shown & 0xFFFFFF, cellFg) && near(shownBg[i]!, cellBg)) {
+        if (shownBg[i] !== UNKNOWN && (shown & BLOCK) >>> 0 === glyphBits && same(shown & 0xFFFFFF, cellFg) && same(shownBg[i]!, cellBg)) {
           inPlace = false
           continue
         }
         // A color close to the one already set saves an escape code.
-        if (bg >= 0 && near(cellBg, bg)) cellBg = bg
-        if (fg >= 0 && near(cellFg, fg)) cellFg = fg
+        if (bg >= 0 && same(cellBg, bg)) cellBg = bg
+        if (fg >= 0 && same(cellFg, fg)) cellFg = fg
         shownFg[i] = (glyphBits | cellFg) >>> 0
         shownBg[i] = cellBg
         w.reserve(MAX_CELL_BYTES)
@@ -218,11 +287,11 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         if (!inPlace) w.moveTo(y + 2, x + 1)
         inPlace = true
         if (cellBg !== bg) {
-          w.color(48, cellBg, trueColor)
+          w.color(48, cellBg, depth)
           bg = cellBg
         }
         if (glyph !== GLYPH_BYTES[0] && cellFg !== fg) {
-          w.color(38, cellFg, trueColor)
+          w.color(38, cellFg, depth)
           fg = cellFg
         }
         w.bytes(glyph)

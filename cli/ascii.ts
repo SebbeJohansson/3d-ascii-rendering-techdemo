@@ -15,7 +15,7 @@ import type { Picked, TracedFrame } from '../app/lib/tracers'
 import type { Camera } from '../app/lib/raycaster'
 import { getPlayer, type PlayerKind, type PlayerPose } from '../app/players'
 import { createInput, type MouseEvent } from './input'
-import { createScreen, type Resolution } from './screen'
+import { COLOR_DEPTH_NAMES, COLOR_DEPTHS, createScreen, detectColorDepth, type ColorDepth, type Resolution } from './screen'
 import { createNodeTracer } from './tracer'
 
 /** Terminal cells are about twice as tall as they are wide. */
@@ -43,6 +43,7 @@ const { values, positionals } = parseArgs({
     backgrounds: { type: 'boolean', default: true },
     blocks: { type: 'boolean', default: false },
     color: { type: 'boolean', default: true },
+    colors: { type: 'string' },
     benchmark: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h' },
   },
@@ -61,13 +62,15 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --no-backgrounds  characters only, no colored cells
   --blocks          twice the detail: half-cell color blocks instead of characters
   --no-color        dark characters on the sky color
+  --colors MODE     24bit, 256, 16 or none (characters only, in the terminal's own
+                    colors). Default: what the terminal supports; none with NO_COLOR
   --benchmark       fly a ${BENCH_SECONDS} s camera path, then print fps and where frame time went
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
       Space/Shift dragon up/down · Tab next environment · R characters/blocks
       T day/night cycle · , and . an hour back/forward · N new world · O outlines
-      B backgrounds · Esc quit
+      B backgrounds · C colors · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom.`
 
 if (values.help) {
@@ -77,6 +80,10 @@ if (values.help) {
 const startEnv = findEnvironment(positionals[0] ?? 'city')
 if (!startEnv) {
   console.error(`Unknown environment "${positionals[0]}".\n\n${USAGE}`)
+  process.exit(1)
+}
+if (values.colors && !COLOR_DEPTHS.includes(values.colors as ColorDepth)) {
+  console.error(`Unknown --colors "${values.colors}": use ${COLOR_DEPTHS.join(', ')}.`)
   process.exit(1)
 }
 if (!process.stdout.isTTY || !process.stdin.isTTY) {
@@ -105,6 +112,9 @@ let chase = defaultChase()
 let cols = 0
 let rows = 0
 let resolution: Resolution = values.blocks ? 'blocks' : 'characters'
+let colorDepth = (values.colors as ColorDepth | undefined) ?? detectColorDepth(process.stdout)
+/** Blocks are colors only: without color, characters it is. */
+const shownResolution = (): Resolution => (colorDepth === 'none' ? 'characters' : resolution)
 /** The grid the tracer fills: rows × 2 in block mode. */
 let grid = { cols: 0, rows: 0 }
 let dirty = true
@@ -113,7 +123,7 @@ const meter = createFrameMeter((p) => {
   perf = p
   showBars()
 })
-const screen = createScreen(process.stdout, process.stdout.hasColors(2 ** 24))
+const screen = createScreen(process.stdout)
 
 const tracer = createNodeTracer({
   onScene: (s) => {
@@ -211,7 +221,7 @@ function finishBenchmark() {
   const frameMs = 1000 / Math.max(fps, 1e-9)
   const ms = (n: number) => `${n.toFixed(1).padStart(6)} ms`
   const lines = [
-    `${env.name} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${process.stdout.hasColors(2 ** 24) ? '24-bit' : '256'} color`,
+    `${env.name} · seed ${seed} · ${grid.cols}×${grid.rows} ${shownResolution()} · ${workerCount} threads · ${COLOR_DEPTH_NAMES[colorDepth]}`,
     '',
     `  fps          ${fps.toFixed(1).padStart(6)}     (worst half second: ${Math.min(...windows)})`,
     `  per frame    ${ms(frameMs)}`,
@@ -231,7 +241,7 @@ function statusBar(loading?: string) {
   const what = loading ? `loading ${loading}…` : summary
   const clock = `${formatTimeOfDay(timeOfDay)}${cycling ? ' ↻' : ''}`
   if (inspected) return ` ▸ ${inspected.label} · ${Math.round(inspected.distance)} m away │ ${env.name} · ${what} · ${clock} · seed ${seed}`
-  return ` ${env.name} · ${what} · ${clock} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${fps} · ${releases}`
+  return ` ${env.name} · ${what} · ${clock} · seed ${seed} · ${grid.cols}×${grid.rows} ${shownResolution()} · ${COLOR_DEPTH_NAMES[colorDepth]} · ${workerCount} threads · ${fps} · ${releases}`
 }
 
 /** The keys that do something right now, for the bar at the bottom. */
@@ -239,7 +249,7 @@ function keyBar() {
   const moves = !playerKind
     ? 'orbit: WASD look · Q/E zoom · click names it'
     : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · R ${resolution === 'blocks' ? 'characters' : 'blocks'} · T cycle · ,. hour · N new · Esc quit`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
@@ -248,7 +258,7 @@ function showBars(loading?: string) {
 
 /** Fits the frame to the terminal and resolution, and redraws everything. */
 function layout() {
-  grid = screen.resize(process.stdout.columns, process.stdout.rows, resolution)
+  grid = screen.resize(process.stdout.columns, process.stdout.rows, shownResolution(), colorDepth)
   cols = process.stdout.columns
   rows = Math.max(1, process.stdout.rows - 2)
   dirty = true
@@ -329,12 +339,13 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === 'o') style.outlines = !style.outlines
     else if (name === 'b') style.cellBackground = !style.cellBackground
     else if (name === 'r') resolution = resolution === 'blocks' ? 'characters' : 'blocks'
+    else if (name === 'c') colorDepth = COLOR_DEPTHS[(COLOR_DEPTHS.indexOf(colorDepth) + 1) % COLOR_DEPTHS.length]!
     else if (name === 't') cycling = !cycling
     else if (name === ',' || name === '.') timeOfDay = (timeOfDay + (name === '.' ? 1 : 23) / 24) % 1
     else return
     dirty = true
     // Restyling needs every cell rewritten.
-    if (name === 'o' || name === 'b' || name === 'r') layout()
+    if (name === 'o' || name === 'b' || name === 'r' || name === 'c') layout()
     else showBars()
   },
   onMouse,
