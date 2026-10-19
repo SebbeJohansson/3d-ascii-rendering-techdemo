@@ -10,7 +10,7 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 ## World and lighting
 
 - [x] **Day/night cycle.** Move the sun so shadows sweep across the city; at night, building windows light up. Uses the `animate` hook. ~2 h
-- [ ] **Mountains / terrain.** Noise-based heightmap terrain. Needs a heightmap shape in both renderers. ~2–3 h
+- [x] **Mountains / terrain.** Noise-based heightmap terrain. Needs a heightmap shape in both renderers. ~2–3 h
 - [x] **Ocean with islands.** Terrain islands in a reflective sea. Reflections are cheap in the ray tracer, harder in the 3D view. ~3 h
 
 ## Interaction and tech comparisons
