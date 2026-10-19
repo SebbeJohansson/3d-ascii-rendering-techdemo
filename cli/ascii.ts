@@ -125,10 +125,43 @@ const tracer = createNodeTracer({
 
 function onFrame(frame: TracedFrame) {
   // Traced for an old terminal size: throw it away and trace again.
-  if (frame.cols !== grid.cols || frame.rows !== grid.rows) {
-    dirty = true
-    return
+  if (frame.cols !== grid.cols || frame.rows !== grid.rows) dirty = true
+  else traced = { frame, camera: tracingCamera! }
+  pump()
+}
+
+/** A traced frame not drawn yet, waiting for the terminal to read the one before it. */
+let traced: { frame: TracedFrame, camera: Camera } | undefined
+/** The camera of the frame the tracer is working on. */
+let tracingCamera: Camera | undefined
+/** When the last trace started, to cap the frame rate. */
+let lastTrace = -Infinity
+
+/**
+ * Moves frames along as soon as each step can, rather than on the next tick: draws a traced
+ * frame once the terminal has read the last one, and starts tracing the next before drawing,
+ * so the workers trace while this thread writes and the terminal reads.
+ */
+function pump() {
+  const now = performance.now()
+  if (unread && now - unread.since > UNREAD_TIMEOUT_MS) {
+    unread = undefined
+    paced = answered
   }
+  const ready = traced && !unread && process.stdout.writableNeedDrain === false ? traced : undefined
+  if (ready) traced = undefined
+  // A little early is fine: the tick that would otherwise start it may come late.
+  if (dirty && cols && !traced && !tracer.busy && now - lastTrace >= TICK_MS - 2) {
+    dirty = false
+    lastTrace = now
+    tracingCamera = { position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }
+    tracer.render(tracingCamera, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
+  }
+  if (ready) draw(ready.frame, ready.camera)
+}
+
+function draw(frame: TracedFrame, camera: Camera) {
+  lastCamera = camera
   showBars()
   const start = performance.now()
   const { bytes, writeMs } = screen.draw(frame, style)
@@ -163,6 +196,7 @@ function onStatus() {
   const last = benchFrames.at(-1)
   if (last && values.benchmark) last.terminal = performance.now() - unread.since
   unread = undefined
+  pump()
 }
 
 /** Leaves the full screen and prints how fast the measured part of the run was. */
@@ -181,11 +215,11 @@ function finishBenchmark() {
     '',
     `  fps          ${fps.toFixed(1).padStart(6)}     (worst half second: ${Math.min(...windows)})`,
     `  per frame    ${ms(frameMs)}`,
-    `    tracing    ${ms(trace)}`,
+    `    tracing    ${ms(trace)}  on worker threads, while the steps below run`,
     `    ANSI       ${ms(build)}  building the escape codes`,
     `    writing    ${ms(write)}  ${(avg('bytes') / 1024).toFixed(0)} KB (${((avg('bytes') * fps) / 1024 / 1024).toFixed(1)} MB/s)`,
     `    terminal   ${ms(terminal)}  until the terminal had read the frame`,
-    `    idle       ${ms(Math.max(0, frameMs - trace - build - write - terminal))}  waiting for the next tick (at most ${Math.round(1000 / TICK_MS)} fps)`,
+    `  at most ${Math.round(1000 / TICK_MS)} fps`,
   ]
   quit(0, lines.join('\n'))
 }
@@ -309,7 +343,7 @@ const input = createInput(process.stdin, process.stdout, {
 let drag: { x: number, y: number, pan: boolean, moved: boolean } | undefined
 /** What the last click landed on, shown in the status bar until the next press. */
 let inspected: Picked | undefined
-/** The camera of the last frame sent to the tracer: a click picks in what is on screen. */
+/** The camera of the frame on screen: a click picks in what is shown. */
 let lastCamera: Camera | undefined
 
 /** Names what is under cell (x, y) of the terminal, in the status bar. */
@@ -402,16 +436,7 @@ function tick() {
   last = now
   step(dt)
   meter.tick()
-  // One frame in flight at a time; it also waits until the terminal has read the last one.
-  if (unread && now - unread.since > UNREAD_TIMEOUT_MS) {
-    unread = undefined
-    paced = answered
-  }
-  if (dirty && cols && !tracer.busy && !unread && process.stdout.writableNeedDrain === false) {
-    dirty = false
-    lastCamera = { position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }
-    tracer.render(lastCamera, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
-  }
+  pump()
   timer = setTimeout(tick, TICK_MS)
 }
 
