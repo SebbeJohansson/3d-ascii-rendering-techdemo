@@ -14,6 +14,19 @@ export default defineNuxtConfig({
       nuxtLink: { prefetchOn: { visibility: false, interaction: true } },
     },
   },
+  vite: {
+    build: {
+      rolldownOptions: {
+        output: {
+          // Keep three.js in its own chunk. Otherwise it is merged with the environments,
+          // which the ASCII view also needs, and the ASCII view downloads three.js too.
+          codeSplitting: {
+            groups: [{ name: 'three', test: /node_modules[\\/]three[\\/]/ }],
+          },
+        },
+      },
+    },
+  },
   nitro: {
     // Static hosts like GitHub Pages need a real file for every deep link.
     prerender: {

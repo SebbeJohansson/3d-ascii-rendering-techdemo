@@ -22,7 +22,8 @@ const method = computed(() => ((settings.method === 'gpu' || settings.method ===
 </script>
 
 <template>
-  <Scene3D
+  <!-- Lazy, so the ray tracers don't download three.js. -->
+  <LazyScene3D
     v-if="method === 'shader' && !lens"
     :env="env"
     :seed="seed"
