@@ -20,7 +20,7 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 
 ## Building and games
 
-- [ ] **Drop boxes.** A Build mode next to the car and dragon: click any surface to drop a box of random size and color there, using the hit from click to inspect. ~1–2 h
+- [x] **Drop boxes.** A Build mode next to the car and dragon: click any surface to drop a box of random size and color there, using the hit from click to inspect. ~1–2 h
 - [ ] **Stack onto faces.** Click a box's face to stick a new box onto it, Minecraft-style, so you build in 3D directly. ~2 h
 - [ ] **Stacking tower game.** Boxes fall straight down without rotating and land on what's below; score is the tower's height. ~half a day
 - [ ] **Car smashes boxes.** Boxes tumble when the car hits them. Needs a physics library (e.g. Rapier) and rotated boxes. ~1 day

@@ -6,6 +6,7 @@ import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../e
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, lightingAt, NOON, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { CAMERA_FOV, MAX_DISTANCE, MAX_POLAR_ANGLE, MIN_DISTANCE, type CameraView } from './camera'
+import { withBoxes } from './boxes'
 import type { Vec3 } from './math'
 import { FLOOR_HEIGHT, GLASS_X, GLASS_Y, HASH_COLUMN, HASH_FACE, HASH_ROW, LIT_SHARE, WINDOW_COLOR, WINDOW_GLOW, WINDOW_SPACING } from './windows'
 
@@ -89,6 +90,27 @@ function disposeMesh(mesh: THREE.Mesh) {
   ;(mesh.material as THREE.Material).dispose()
 }
 
+/**
+ * One instanced mesh (one draw call) for primitives of one shape and material, which come
+ * from the first of them. `night` (0..1) lights windows.
+ */
+function createInstances(group: Primitive[], night: THREE.UniformNode<'float', number>) {
+  const { shape, roughness = 1, metalness = 0, windows } = group[0]!
+  const material = new THREE.MeshStandardMaterial({ roughness, metalness })
+  if (windows) material.emissiveNode = windowGlow(night)
+  const mesh = new THREE.InstancedMesh(UNIT_GEOMETRY[shape](), material, group.length)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  const m = new THREE.Matrix4()
+  const color = new THREE.Color()
+  group.forEach((p, i) => {
+    m.makeScale(p.width, p.height, p.depth).setPosition(p.x, p.y, p.z)
+    mesh.setMatrixAt(i, m)
+    mesh.setColorAt(i, color.setHex(p.color))
+  })
+  return mesh
+}
+
 /** Builds the three scene graph for an environment. Rendering is left to the caller. */
 export function createEnvironmentScene() {
   const scene = new THREE.Scene()
@@ -130,8 +152,9 @@ export function createEnvironmentScene() {
   function build(env: Environment, seed: number, size: number) {
     clear()
     const generated = env.generate(seed, size)
-    const { primitives, meshes = [], extent, summary } = generated
+    const { primitives, meshes = [], extent } = generated
     current = { env, scene: generated, geometries: [] }
+    withDropped = undefined
 
     scene.background = new THREE.Color(env.sky)
     scene.fog = new THREE.Fog(env.sky, env.fogNear, env.fogFar)
@@ -152,22 +175,7 @@ export function createEnvironmentScene() {
       if (group) group.push(p)
       else groups.set(key, [p])
     }
-    const m = new THREE.Matrix4()
-    const color = new THREE.Color()
-    for (const group of groups.values()) {
-      const { shape, roughness = 1, metalness = 0, windows } = group[0]!
-      const material = new THREE.MeshStandardMaterial({ roughness, metalness })
-      if (windows) material.emissiveNode = windowGlow(night)
-      const mesh = new THREE.InstancedMesh(UNIT_GEOMETRY[shape](), material, group.length)
-      mesh.castShadow = true
-      mesh.receiveShadow = true
-      group.forEach((p, i) => {
-        m.makeScale(p.width, p.height, p.depth).setPosition(p.x, p.y, p.z)
-        mesh.setMatrixAt(i, m)
-        mesh.setColorAt(i, color.setHex(p.color))
-      })
-      content.add(mesh)
-    }
+    for (const group of groups.values()) content.add(createInstances(group, night))
 
     for (const m of meshes) {
       const mesh = createMesh(m)
@@ -176,7 +184,27 @@ export function createEnvironmentScene() {
       content.add(mesh)
       current.geometries.push(mesh.geometry)
     }
-    return summary
+    return shown()!.summary
+  }
+
+  /** Dropped boxes, kept outside `content` so they change without rebuilding the environment. */
+  let boxes: Primitive[] = []
+  let boxMesh: THREE.InstancedMesh | undefined
+  /** The generated scene with the boxes added, made when first asked for. */
+  let withDropped: EnvironmentScene | undefined
+
+  /** Replaces the dropped boxes. Returns the summary counting them, once something is built. */
+  function setBoxes(next: Primitive[]) {
+    boxes = next
+    withDropped = undefined
+    if (boxMesh) {
+      scene.remove(boxMesh)
+      disposeMesh(boxMesh)
+      boxMesh.dispose()
+      boxMesh = undefined
+    }
+    if (boxes.length) scene.add(boxMesh = createInstances(boxes, night))
+    return shown()?.summary
   }
 
   /** Lights the scene for the time of day (see lighting.ts). */
@@ -248,13 +276,16 @@ export function createEnvironmentScene() {
 
   function dispose() {
     clear()
+    setBoxes([])
     setPlayer(null, 0)
   }
 
-  /** The generated scene on show, which animate() keeps posed. */
-  const generated = () => current?.scene
+  /** The generated scene on show with the dropped boxes, which animate() keeps posed. */
+  function shown() {
+    return current && (withDropped ??= withBoxes(current.scene, boxes))
+  }
 
-  return { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, generated, dispose }
+  return { scene, camera, build, setBoxes, animate, setPlayer, placePlayer, setTimeOfDay, generated: shown, dispose }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

@@ -5,10 +5,11 @@
  */
 import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
-import type { Environment, EnvironmentScene } from '../environments/types'
+import type { Environment, EnvironmentScene, Primitive } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
-import { buildRaycastPlayer, buildRaycastScene, castRay, placePlayer, renderScene, setLighting, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { withBoxes, type DropSpot } from './boxes'
+import { buildRaycastPlayer, buildRaycastScene, castRay, landingHeight, placePlayer, renderScene, setLighting, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -27,8 +28,9 @@ export interface TracedFrame {
   presented?: boolean
 }
 
-/** What a click landed on. */
-export interface Picked {
+/** What a click landed on, and where. */
+export interface Picked extends DropSpot {
+  kind: RayHit['kind']
   /** e.g. "Building · 12 floors". */
   label: string
   /** From the camera, in world units (meters). */
@@ -47,6 +49,8 @@ export interface Tracer {
   /** A frame is being traced; wait for onFrame before asking for the next. */
   readonly busy: boolean
   setScene: (envId: string, seed: number, size: number) => void
+  /** Replaces the boxes dropped into the scene, now and in scenes set after. */
+  setBoxes: (boxes: Primitive[]) => void
   /** Spawns a player (or removes it, with null). Its colors come from the seed. */
   setPlayer: (kind: PlayerKind | null, seed: number) => void
   /**
@@ -97,7 +101,41 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
       }
     }
   }
-  return { label: label ?? 'Something', distance: hit.distance }
+  // Nudged off the surface, so a wall's spot lands on what is beside it, not on its own top.
+  const [x, y, z] = hit.point.map((v, k) => v + hit.normal[k]! * 0.05)
+  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, landing: landingHeight(scene, x!, y!, z!) }
+}
+
+/**
+ * An environment's generated scene and the ray tracer's copy of it, with dropped boxes on
+ * top. Changing the boxes only rebuilds the primitives, not the environment.
+ */
+export function createSceneSlot() {
+  let base: EnvironmentScene | undefined
+  let boxes: Primitive[] = []
+  const slot = {
+    envId: '',
+    generated: undefined as EnvironmentScene | undefined,
+    scene: undefined as RaycastScene | undefined,
+    /** Generates the environment and builds its ray tracer's copy. Returns its summary. */
+    set(envId: string, seed: number, size: number) {
+      const env = getEnvironment(envId)
+      base = env.generate(seed, size)
+      slot.generated = withBoxes(base, boxes)
+      slot.scene = buildRaycastScene(env, slot.generated)
+      slot.envId = envId
+      return slot.generated.summary
+    },
+    /** Returns the new summary, or undefined while there is no scene yet. */
+    setBoxes(next: Primitive[]) {
+      boxes = next
+      if (!base || !slot.scene) return
+      slot.generated = withBoxes(base, boxes)
+      setPrimitives(slot.scene, slot.generated.primitives)
+      return slot.generated.summary
+    },
+  }
+  return slot
 }
 
 /**
@@ -177,26 +215,25 @@ export function upscaleFrame(frame: TracedFrame, cols: number, rows: number): Tr
 }
 
 export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Tracer {
-  let scene: RaycastScene | undefined
-  let generated: EnvironmentScene | undefined
-  let currentEnv = ''
+  const slot = createSceneSlot()
   const player = createPlayerSlot()
   return {
     label: 'main thread',
     busy: false,
     setScene(envId, seed, size) {
-      const env = getEnvironment(envId)
-      generated = env.generate(seed, size)
-      scene = buildRaycastScene(env, generated)
-      currentEnv = envId
-      onScene(generated.summary)
+      onScene(slot.set(envId, seed, size))
+    },
+    setBoxes(boxes) {
+      const summary = slot.setBoxes(boxes)
+      if (summary) onScene(summary)
     },
     setPlayer(kind, seed) {
       player.set(kind, seed)
     },
     render(camera, cols, rows, time, pose, timeOfDay = NOON, occlusion = false) {
+      const { scene, generated } = slot
       if (!scene || !generated) return
-      poseScene(currentEnv, generated, scene, time, timeOfDay)
+      poseScene(slot.envId, generated, scene, time, timeOfDay)
       player.attach(scene, pose, time)
       scene.occlusion = occlusion
       const frame = emptyFrame(cols, rows)
@@ -206,7 +243,8 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
       onFrame(frame)
     },
     async pick(camera, u, v) {
-      return scene && generated ? pickScene(currentEnv, generated, scene, player.name, camera, u, v) : null
+      const { scene, generated } = slot
+      return scene && generated ? pickScene(slot.envId, generated, scene, player.name, camera, u, v) : null
     },
     dispose() {},
   }
@@ -283,6 +321,9 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     },
     setScene(envId, seed, size) {
       for (const w of workers) post(w, { type: 'scene', envId, seed, size })
+    },
+    setBoxes(boxes) {
+      for (const w of workers) post(w, { type: 'boxes', boxes })
     },
     setPlayer(kind, seed) {
       for (const w of workers) post(w, { type: 'player', kind, seed })

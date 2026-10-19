@@ -40,6 +40,8 @@ const CLICK_SLOP = 4
 /** What the last click landed on, shown beside where it landed until the next press. */
 const inspected = ref<Picked & { x: number, y: number }>()
 const picker = createScenePicker()
+const boxMode = useBoxMode()
+const { boxes, drop } = useBoxes(props.env)
 
 function onPointerDown(e: PointerEvent) {
   press = e.button === 0 && !e.shiftKey ? { x: e.clientX, y: e.clientY } : undefined
@@ -61,7 +63,10 @@ function onPointerUp(e: PointerEvent) {
   drag = undefined
 }
 
-/** Names what is under the pointer, with the ray tracer's copy of the scene on show. */
+/**
+ * Names what is under the pointer, with the ray tracer's copy of the scene on show, or drops
+ * a box there.
+ */
 function inspect(e: PointerEvent) {
   const generated = environmentScene()
   if (!generated) return
@@ -71,6 +76,10 @@ function inspect(e: PointerEvent) {
   const position = camera.position.toArray()
   const target = camera.position.clone().add(camera.getWorldDirection(camera.position.clone())).toArray()
   const picked = picker.pick(props.env, generated, playerPose.value, performance.now() / 1000, { position, target, fov: camera.fov, aspect: camera.aspect }, x / rect.width, y / rect.height)
+  if (boxMode.value) {
+    if (picked && picked.kind !== 'player') drop(picked)
+    return
+  }
   inspected.value = picked ? { ...picked, x, y } : undefined
 }
 
@@ -83,7 +92,7 @@ function onWheel(e: WheelEvent) {
 
 const { time: timeOfDay } = useTimeOfDay()
 
-const { scene, camera, build, animate, setPlayer, placePlayer, setTimeOfDay, generated: environmentScene, dispose } = createEnvironmentScene()
+const { scene, camera, build, setBoxes, animate, setPlayer, placePlayer, setTimeOfDay, generated: environmentScene, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let shaderAscii: ReturnType<typeof createShaderAscii> | undefined
 let controls: OrbitControls | undefined
@@ -93,7 +102,10 @@ const meter = createFrameMeter(perf => emit('perf', perf))
 
 function rebuild() {
   inspected.value = undefined
-  const summary = build(props.env, props.seed, props.size)
+  showStats(build(props.env, props.seed, props.size))
+}
+
+function showStats(summary: string) {
   emit('stats', `${summary} · ${props.ascii ? 'shader ASCII · ' : ''}${renderer ? backendName(renderer) : ''}`)
 }
 
@@ -157,6 +169,10 @@ onMounted(async () => {
 })
 
 watch(() => [props.env, props.seed, props.size], rebuild)
+watch(boxes, (b) => {
+  const summary = setBoxes(b)
+  if (summary) showStats(summary)
+}, { immediate: true })
 watch(() => props.ascii?.fontSize, resize)
 watch([playerKind, () => props.seed], ([kind, seed]) => {
   setPlayer(kind, seed)

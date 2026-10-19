@@ -12,13 +12,13 @@
  *   needs, and reads the frame back otherwise, e.g. for the lens, which the CPU draws.
  */
 import { getEnvironment } from '../../environments'
-import type { EnvironmentScene } from '../../environments/types'
+import type { Primitive } from '../../environments/types'
 import { NOON } from '../../environments/lighting'
 import type { Bvh } from '../bvh'
 import { linearToSrgbByte } from '../color'
 import { cameraBasis } from '../math'
-import { buildRaycastScene, type RaycastPlayer, type RaycastScene } from '../raycaster'
-import { createPlayerSlot, pickScene, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
+import type { RaycastPlayer, RaycastScene } from '../raycaster'
+import { createPlayerSlot, createSceneSlot, pickScene, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
 import { GLYPH_FLAGS, GLYPH_WORKGROUP, GLYPHS_WGSL } from './glyphs.wgsl'
 import { PRESENT_WGSL } from './present.wgsl'
 import { RAYTRACE_WGSL } from './raytrace.wgsl'
@@ -114,9 +114,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   let disposed = false
   let busy = false
 
-  let generated: EnvironmentScene | undefined
-  let scene: RaycastScene | undefined
-  let currentEnv = ''
+  const slot = createSceneSlot()
   const player = createPlayerSlot()
   /** The player whose BVH is on the GPU, to notice when another one is spawned. */
   let uploadedPlayer: RaycastPlayer | undefined
@@ -194,11 +192,31 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       pendingScene = [envId, seed, size]
       return
     }
-    const env = getEnvironment(envId)
-    generated = env.generate(seed, size)
-    scene = buildRaycastScene(env, generated)
-    currentEnv = envId
+    const summary = slot.set(envId, seed, size)
+    const scene = slot.scene!
+    mesh = scene.mesh && packBvh(scene.mesh)
 
+    buffers ??= {} as NonNullable<typeof buffers>
+    if (!buffers.params) buffers.params = device.createBuffer({ size: PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    uploadPrimitives(scene)
+    replace('meshF', storage(mesh?.floats ?? new Float32Array(4)))
+    replace('meshU', storage(mesh?.uints ?? new Uint32Array(4)))
+    if (!buffers.playerF) {
+      replace('playerF', storage(new Float32Array(4)))
+      replace('playerU', storage(new Uint32Array(4)))
+    }
+    onScene(summary)
+  }
+
+  function setBoxes(boxes: Primitive[]) {
+    const summary = slot.setBoxes(boxes)
+    if (!summary || !buffers) return
+    uploadPrimitives(slot.scene!)
+    onScene(summary)
+  }
+
+  /** Uploads the primitives and the grid that finds them. */
+  function uploadPrimitives(scene: RaycastScene) {
     const count = scene.shapes.length
     const prims = new Float32Array(count * 10)
     for (let p = 0; p < count; p++) {
@@ -209,19 +227,8 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     const grid = new Uint32Array(scene.cellStart.length + scene.cellItems.length)
     grid.set(scene.cellStart, 0)
     grid.set(scene.cellItems, scene.cellStart.length)
-    mesh = scene.mesh && packBvh(scene.mesh)
-
-    buffers ??= {} as NonNullable<typeof buffers>
-    if (!buffers.params) buffers.params = device.createBuffer({ size: PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     replace('prims', storage(prims))
     replace('grid', storage(grid))
-    replace('meshF', storage(mesh?.floats ?? new Float32Array(4)))
-    replace('meshU', storage(mesh?.uints ?? new Uint32Array(4)))
-    if (!buffers.playerF) {
-      replace('playerF', storage(new Float32Array(4)))
-      replace('playerU', storage(new Uint32Array(4)))
-    }
-    onScene(generated.summary)
   }
 
   /** Uploads a newly spawned player's BVH, or the parts that move (all of it, for a flapping dragon). */
@@ -246,7 +253,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   }
 
   function writeParams(camera: Parameters<Tracer['render']>[0], cols: number, rows: number) {
-    const s = scene!
+    const s = slot.scene!
     const { forward, right, up } = cameraBasis(camera.position, camera.target)
     const L = s.light
     const set = (slot: number, v: readonly number[], w: number) => pf.set([v[0]!, v[1]!, v[2]!, w], slot * 4)
@@ -293,14 +300,15 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   }
 
   async function render(camera: Parameters<Tracer['render']>[0], cols: number, rows: number, time: number, pose?: Parameters<Tracer['render']>[4], timeOfDay = NOON, occlusion = false) {
+    const { scene, generated, envId } = slot
     if (busy || !device || !pipeline || !scene || !generated || !buffers) return
     busy = true
     const start = performance.now()
-    const env = getEnvironment(currentEnv)
+    const env = getEnvironment(envId)
 
     // Light, animate and place everything on the CPU, as the CPU tracers do; then upload
     // only what moved.
-    poseScene(currentEnv, generated, scene, time, timeOfDay)
+    poseScene(envId, generated, scene, time, timeOfDay)
     if (env.animate && scene.mesh && mesh) writeMoved(buffers.meshF, scene.mesh.bvh, scene.mesh.normals, mesh)
     player.attach(scene, pose, time)
     syncPlayer(scene.player)
@@ -438,7 +446,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   }
 
   function drawToCanvas(encoder: GPUCommandEncoder, p: NonNullable<typeof present>, cols: number, rows: number) {
-    const sky = scene!.light.sky.map(c => linearToSrgbByte(c) / 255)
+    const sky = slot.scene!.light.sky.map(c => linearToSrgbByte(c) / 255)
     device!.queue.writeBuffer(p.params, 0, new Float32Array([cols, rows, canvas!.width, canvas!.height, ...sky, 1]))
     p.bindGroup ??= device!.createBindGroup({
       layout: p.pipeline.getBindGroupLayout(0),
@@ -459,9 +467,11 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
       return busy
     },
     setScene,
+    setBoxes,
     setPlayer: player.set,
     async pick(camera, u, v) {
-      return scene && generated ? pickScene(currentEnv, generated, scene, player.name, camera, u, v) : null
+      const { scene, generated } = slot
+      return scene && generated ? pickScene(slot.envId, generated, scene, player.name, camera, u, v) : null
     },
     setGlyphs(next) {
       glyphs = next

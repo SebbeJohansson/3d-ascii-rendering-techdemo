@@ -122,6 +122,7 @@ function startTracer() {
     ? createGpuTracer(events, canvas.value)
     : gpuGlyphTracer ?? (props.worker ? createWorkerTracer(events) : createMainThreadTracer(events))
   tracer.setPlayer(playerKind.value, props.seed)
+  tracer.setBoxes(boxes.value)
   rebuild()
 }
 
@@ -240,6 +241,8 @@ let drag: { x: number, y: number, pan: boolean, startX: number, startY: number }
 const CLICK_SLOP = 4
 /** What the last click landed on, shown beside where it landed until the next press. */
 const inspected = ref<Picked & { x: number, y: number }>()
+const boxMode = useBoxMode()
+const { boxes, drop } = useBoxes(props.env)
 
 function setView(next: CameraView) {
   view.value = next
@@ -275,13 +278,20 @@ function onPointerUp(e: PointerEvent) {
   stopMoving()
 }
 
-/** Casts a ray through the clicked point, with the camera of the frame on screen. */
+/**
+ * Casts a ray through the clicked point, with the camera of the frame on screen, and names
+ * what it hits or drops a box there.
+ */
 async function inspect(e: PointerEvent) {
   if (!tracer || !canvas.value) return
   const rect = canvas.value.getBoundingClientRect()
   const x = e.clientX - rect.left
   const y = e.clientY - rect.top
   const picked = await tracer.pick(lastCamera ?? camera(), x / rect.width, y / rect.height)
+  if (boxMode.value) {
+    if (picked && picked.kind !== 'player') drop(picked)
+    return
+  }
   inspected.value = picked ? { ...picked, x, y } : undefined
 }
 
@@ -311,6 +321,7 @@ onMounted(async () => {
 })
 
 watch(() => [props.env, props.seed, props.size], rebuild)
+watch(boxes, b => tracer?.setBoxes(b))
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.occlusion, () => (dirty = true))
 watch(() => props.fontSize, resize)

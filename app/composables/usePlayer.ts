@@ -1,4 +1,5 @@
 import type { Environment, EnvironmentScene } from '~/environments'
+import { withBoxes } from '~/lib/boxes'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type ChaseCamera, type PlayerMotion } from '~/lib/playerMotion'
 import { getPlayer, type Player, type PlayerKind, type PlayerPose } from '~/players'
 
@@ -50,16 +51,19 @@ export function usePlayerDriver(env: Environment) {
   const view = useCameraView(env)
   const { seed, size } = useSceneSettings(env)
   const chaseCamera = useChaseCamera()
+  const { boxes } = useBoxes(env)
   const held = new Set<string>()
   const motion: PlayerMotion = { speed: 0, cameraHeading: 0 }
   let frameId = 0
   let last = 0
-  /** The environment's solids to collide with, generated when first needed. */
+  /** The environment as generated, when first needed, and with dropped boxes: the solids to collide with. */
+  let generated: EnvironmentScene | undefined
   let world: EnvironmentScene | undefined
-  watch([seed, size], () => (world = undefined))
+  watch([seed, size], () => (generated = world = undefined))
+  watch(boxes, () => (world = undefined))
 
   function getWorld() {
-    return (world ??= env.generate(seed.value, size.value))
+    return (world ??= withBoxes(generated ??= env.generate(seed.value, size.value), boxes.value))
   }
 
   watch(kind, (k, previous) => {

@@ -1,14 +1,14 @@
 // Ray traces off the main thread. Holds its own copy of the scene, so each frame only needs
 // a camera in and two small pixel buffers out. The page runs several of these in parallel,
 // each tracing an interleaved share of the rows (see lib/tracers.ts).
-import { getEnvironment } from '../environments'
-import type { EnvironmentScene } from '../environments/types'
-import { buildRaycastScene, renderScene, type Camera, type RaycastScene } from '../lib/raycaster'
-import { createPlayerSlot, pickScene, poseScene, type Picked } from '../lib/tracers'
+import type { Primitive } from '../environments/types'
+import { renderScene, type Camera } from '../lib/raycaster'
+import { createPlayerSlot, createSceneSlot, pickScene, poseScene, type Picked } from '../lib/tracers'
 import type { PlayerKind, PlayerPose } from '../players'
 
 export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
+  | { type: 'boxes', boxes: Primitive[] }
   | { type: 'player', kind: PlayerKind | null, seed: number }
   /** What the ray through (u, v) of the view hits, in the scene as the last frame posed it. */
   | { type: 'pick', camera: Camera, u: number, v: number }
@@ -20,9 +20,7 @@ export type WorkerResponse =
   | { type: 'pick', picked: Picked | null }
   | { type: 'frame', rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
-let scene: RaycastScene | undefined
-let generated: EnvironmentScene | undefined
-let envId = ''
+const slot = createSceneSlot()
 const player = createPlayerSlot()
 
 function reply(message: WorkerResponse, transfer: Transferable[] = []) {
@@ -31,12 +29,13 @@ function reply(message: WorkerResponse, transfer: Transferable[] = []) {
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data
+  const { scene, generated, envId } = slot
   if (msg.type === 'scene') {
-    const env = getEnvironment(msg.envId)
-    generated = env.generate(msg.seed, msg.size)
-    scene = buildRaycastScene(env, generated)
-    envId = msg.envId
-    reply({ type: 'scene', summary: generated.summary })
+    reply({ type: 'scene', summary: slot.set(msg.envId, msg.seed, msg.size) })
+  }
+  else if (msg.type === 'boxes') {
+    const summary = slot.setBoxes(msg.boxes)
+    if (summary) reply({ type: 'scene', summary })
   }
   else if (msg.type === 'player') {
     player.set(msg.kind, msg.seed)

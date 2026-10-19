@@ -8,7 +8,7 @@
  * built once in the player's own space; rays are moved into that space instead of moving
  * its triangles every time it moves.
  */
-import type { Environment, EnvironmentScene, Mesh, Shape } from '../environments/types'
+import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
 import type { PlayerPose } from '../players/types'
 import { lightingAt, NOON, type Lighting } from '../environments/lighting'
 import { buildBvh, bvhHit, intersectBvh, refitBvh, type Bvh } from './bvh'
@@ -143,38 +143,6 @@ export function setLighting(s: RaycastScene, lighting: Lighting) {
 }
 
 export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene): RaycastScene {
-  const half = extent / 2
-  const count = primitives.length
-  const bounds = new Float32Array(count * 6)
-  const shapes = new Uint8Array(count)
-  const colors = new Float32Array(count * 3)
-  const windows = new Uint8Array(count)
-  let maxHeight = 1
-
-  primitives.forEach((p, i) => {
-    bounds.set([p.x - p.width / 2, p.y, p.z - p.depth / 2, p.x + p.width / 2, p.y + p.height, p.z + p.depth / 2], i * 6)
-    shapes[i] = SHAPE_CODES[p.shape]
-    colors.set(scale(linearRgb(p.color), 1 - (p.metalness ?? 0)), i * 3)
-    windows[i] = p.windows ? 1 : 0
-    maxHeight = Math.max(maxHeight, p.y + p.height)
-  })
-
-  // Bucket primitives into grid cells: count, prefix-sum, then fill.
-  const cells = Math.ceil(extent / CELL_SIZE)
-  const toCell = (v: number) => Math.min(cells - 1, Math.max(0, Math.floor((v + half) / CELL_SIZE)))
-  const cellStart = new Uint32Array(cells * cells + 1)
-  const forEachCell = (i: number, fn: (cell: number) => void) => {
-    const o = i * 6
-    for (let cx = toCell(bounds[o]!); cx <= toCell(bounds[o + 3]!); cx++) {
-      for (let cz = toCell(bounds[o + 2]!); cz <= toCell(bounds[o + 5]!); cz++) fn(cx * cells + cz)
-    }
-  }
-  for (let i = 0; i < count; i++) forEachCell(i, c => cellStart[c + 1]!++)
-  for (let c = 0; c < cells * cells; c++) cellStart[c + 1]! += cellStart[c]!
-  const cursor = cellStart.slice(0, -1)
-  const cellItems = new Uint32Array(cellStart[cells * cells]!)
-  for (let i = 0; i < count; i++) forEachCell(i, c => cellItems[cursor[c]!++] = i)
-
   // Merge every mesh into one, so one BVH covers them all.
   let mesh: RaycastScene['mesh']
   if (meshes.length) {
@@ -196,33 +164,72 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     }
     mesh = { bvh: buildBvh(positions, indices), normals, albedo }
   }
-  const primitivesHeight = maxHeight
-  if (mesh) maxHeight = Math.max(maxHeight, mesh.bvh.bounds[4]!)
 
   const scene: RaycastScene = {
-    bounds,
-    shapes,
-    colors,
-    windows,
+    bounds: new Float32Array(0),
+    shapes: new Uint8Array(0),
+    colors: new Float32Array(0),
+    windows: new Uint8Array(0),
     ground: linearRgb(env.ground),
     reflectance: env.reflectance ?? 0,
     light: undefined!,
     fogNear: env.fogNear,
     fogFar: env.fogFar,
-    half,
-    maxHeight,
-    primitivesHeight,
+    half: extent / 2,
+    maxHeight: 1,
+    primitivesHeight: 1,
     cellSize: CELL_SIZE,
-    cells,
-    cellStart,
-    cellItems,
-    stamp: new Uint32Array(count),
+    cells: Math.ceil(extent / CELL_SIZE),
+    cellStart: new Uint32Array(0),
+    cellItems: new Uint32Array(0),
+    stamp: new Uint32Array(0),
     rayId: 0,
     mesh,
     occlusion: false,
   }
+  setPrimitives(scene, primitives)
   setLighting(scene, lightingAt(NOON, env.sky))
   return scene
+}
+
+/**
+ * Replaces the scene's primitives and rebuilds their grid, keeping its meshes. Cheap next to
+ * building the scene again, so dropped boxes can be added one at a time.
+ */
+export function setPrimitives(s: RaycastScene, primitives: Primitive[]) {
+  const { half, cells } = s
+  const count = primitives.length
+  const bounds = new Float32Array(count * 6)
+  const shapes = new Uint8Array(count)
+  const colors = new Float32Array(count * 3)
+  const windows = new Uint8Array(count)
+  let maxHeight = 1
+
+  primitives.forEach((p, i) => {
+    bounds.set([p.x - p.width / 2, p.y, p.z - p.depth / 2, p.x + p.width / 2, p.y + p.height, p.z + p.depth / 2], i * 6)
+    shapes[i] = SHAPE_CODES[p.shape]
+    colors.set(scale(linearRgb(p.color), 1 - (p.metalness ?? 0)), i * 3)
+    windows[i] = p.windows ? 1 : 0
+    maxHeight = Math.max(maxHeight, p.y + p.height)
+  })
+
+  // Bucket primitives into grid cells: count, prefix-sum, then fill.
+  const toCell = (v: number) => Math.min(cells - 1, Math.max(0, Math.floor((v + half) / CELL_SIZE)))
+  const cellStart = new Uint32Array(cells * cells + 1)
+  const forEachCell = (i: number, fn: (cell: number) => void) => {
+    const o = i * 6
+    for (let cx = toCell(bounds[o]!); cx <= toCell(bounds[o + 3]!); cx++) {
+      for (let cz = toCell(bounds[o + 2]!); cz <= toCell(bounds[o + 5]!); cz++) fn(cx * cells + cz)
+    }
+  }
+  for (let i = 0; i < count; i++) forEachCell(i, c => cellStart[c + 1]!++)
+  for (let c = 0; c < cells * cells; c++) cellStart[c + 1]! += cellStart[c]!
+  const cursor = cellStart.slice(0, -1)
+  const cellItems = new Uint32Array(cellStart[cells * cells]!)
+  for (let i = 0; i < count; i++) forEachCell(i, c => cellItems[cursor[c]!++] = i)
+
+  Object.assign(s, { bounds, shapes, colors, windows, cellStart, cellItems, stamp: new Uint32Array(count), primitivesHeight: maxHeight })
+  s.maxHeight = s.mesh ? Math.max(maxHeight, s.mesh.bvh.bounds[4]!) : maxHeight
 }
 
 /**
@@ -845,10 +852,16 @@ export function renderScene(
 }
 
 /** What a single ray hit: a primitive or mesh triangle by index, the ground, or the player. */
-export type RayHit =
-  | { kind: 'primitive', index: number, distance: number }
-  | { kind: 'mesh', triangle: number, distance: number }
-  | { kind: 'ground' | 'player', distance: number }
+export type RayHit = (
+  | { kind: 'primitive', index: number }
+  | { kind: 'mesh', triangle: number }
+  | { kind: 'ground' | 'player' }
+) & {
+  distance: number
+  point: Vec3
+  /** Unit surface normal there, facing the ray's side for meshes as they are built. */
+  normal: Vec3
+}
 
 /**
  * Traces the one ray through (u, v) of the camera's view, both 0..1 from the top left, the
@@ -864,8 +877,37 @@ export function castRay(s: RaycastScene, cam: Camera, u: number, v: number): Ray
   const [ox, oy, oz] = cam.position
   if (!trace(s, ox, oy, oz, d[0]! / len, d[1]! / len, d[2]! / len, false, Infinity)) return undefined
   const { t: distance, prim } = hit
-  if (prim === GROUND) return { kind: 'ground', distance }
-  if (prim === PLAYER) return { kind: 'player', distance }
-  if (prim === MESH) return { kind: 'mesh', triangle: hit.triangle, distance }
-  return { kind: 'primitive', index: prim, distance }
+  const point: Vec3 = [ox + (d[0]! / len) * distance, oy + (d[1]! / len) * distance, oz + (d[2]! / len) * distance]
+  const normal = hitNormal(s)
+  if (prim === GROUND) return { kind: 'ground', distance, point, normal }
+  if (prim === PLAYER) return { kind: 'player', distance, point, normal }
+  if (prim === MESH) return { kind: 'mesh', triangle: hit.triangle, distance, point, normal }
+  return { kind: 'primitive', index: prim, distance, point, normal }
+}
+
+/** The last hit's normal, in world space. A player's is left in its own space: close enough to tell up from sideways. */
+function hitNormal(s: RaycastScene): Vec3 {
+  if (hit.prim !== MESH && hit.prim !== PLAYER) return [hit.nx, hit.ny, hit.nz]
+  const { normals, bvh } = hit.prim === MESH ? s.mesh! : s.player!
+  const t3 = hit.triangle * 3
+  const w = [1 - hit.u - hit.v, hit.u, hit.v]
+  const n: Vec3 = [0, 0, 0]
+  for (let k = 0; k < 3; k++) {
+    const i = bvh.indices[t3 + k]! * 3
+    for (let c = 0; c < 3; c++) n[c]! += normals[i + c]! * w[k]!
+  }
+  const len = Math.hypot(...n) || 1
+  return [n[0] / len, n[1] / len, n[2] / len]
+}
+
+/**
+ * Height of the first surface straight below (x, y, z), leaving out the player: where
+ * something dropped there lands. 0 (the ground's height) if nothing is below.
+ */
+export function landingHeight(s: RaycastScene, x: number, y: number, z: number) {
+  const player = s.player
+  s.player = undefined
+  const landed = trace(s, x, y, z, 0, -1, 0, false, Infinity)
+  s.player = player
+  return landed ? y - hit.t : 0
 }

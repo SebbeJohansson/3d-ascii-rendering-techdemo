@@ -37,6 +37,10 @@ In the ocean the ground is a sea that reaches the horizon and mirrors the island
 
 Click anything to see what it is and how far away: a building and its floors, a pine and its height, the sea, the dragon. It works in every view, the terminal included, where the name shows in the top bar. The ray tracer casts one ray through the click; the 3D view builds the ray tracer's copy of the scene on the first click to do the same.
 
+### Dropping boxes
+
+Tick **Click to drop boxes** and a click drops a box of random size and color instead: onto the roof or box you clicked, or against the wall you clicked and down to whatever is below it, so boxes stack into towers. The dragon and the car bump into them like anything else. **Clear boxes** removes them, and a new seed or size starts without any. They are only added on top of the generated scene: the ray tracer rebuilds its grid of primitives and the 3D view one instanced mesh, without generating the environment again (see `app/lib/boxes.ts`). Browser only for now.
+
 ### Riding a dragon or a car
 
 The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom; once it moves and the mouse is left alone for 1.5 seconds, the camera eases back behind it. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.

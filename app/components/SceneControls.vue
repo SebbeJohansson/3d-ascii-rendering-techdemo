@@ -15,6 +15,10 @@ const props = defineProps<{
 
 const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
+const boxMode = useBoxMode()
+const { boxes, clear: clearBoxes } = useBoxes(props.env)
+/** What a click does, for the key hints. */
+const clickDoes = computed(() => (boxMode.value ? 'click to drop a box' : 'click to name what\'s there'))
 const { time: timeOfDay, cycling } = useTimeOfDay()
 
 const benchmark = useBenchmark()
@@ -60,10 +64,10 @@ function randomize() {
       <template v-if="getPlayer(playerKind).flies">
         · <kbd>Space</kbd> up · <kbd>Shift</kbd> down
       </template>
-      · drag to look · scroll to zoom · click to name what's there
+      · drag to look · scroll to zoom · {{ clickDoes }}
     </p>
     <p v-else class="keys">
-      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · click to name what's there
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ clickDoes }}
     </p>
     <label>
       Seed
@@ -81,6 +85,13 @@ function randomize() {
       <input v-model="cycling" type="checkbox">
       Day and night cycle ({{ DAY_LENGTH / 60 }} min day)
     </label>
+    <label class="toggle">
+      <input v-model="boxMode" type="checkbox">
+      Click to drop boxes
+    </label>
+    <button v-if="boxes.length" type="button" class="link" @click="clearBoxes">
+      Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
+    </button>
     <slot />
     <button type="button" class="primary" @click="randomize">
       New {{ env.name.toLowerCase() }}
