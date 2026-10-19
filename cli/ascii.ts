@@ -5,9 +5,10 @@
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { parseArgs } from 'node:util'
-import { ENVIRONMENTS, findEnvironment, type Environment } from '../app/environments'
+import { ENVIRONMENTS, findEnvironment, type Environment, type EnvironmentScene } from '../app/environments'
 import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
+import { dropBox, fallBoxes, withBoxes, type DroppedBox } from '../app/lib/boxes'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -67,11 +68,12 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --benchmark       fly a ${BENCH_SECONDS} s camera path, then print fps and where frame time went
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
-Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
-      Space/Shift dragon up/down · Tab next environment · R characters/blocks
+Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · WASD/arrows move or look · Q/E zoom (dragon: down/up)
+      Space/Shift dragon up/down · G box gravity · X clear boxes · Tab next environment · R characters/blocks
       T day/night cycle · , and . an hour back/forward · N new world · O outlines
       B backgrounds · C colors · Esc quit
-Mouse: drag to look, right-drag to pan, wheel to zoom.`
+Mouse: drag to look, right-drag to pan, wheel to zoom, click to name what's there
+       (in boxes mode: to drop a box there).`
 
 if (values.help) {
   console.log(USAGE)
@@ -100,8 +102,14 @@ let timeOfDay = values.time ? (((Number(values.time) / 24) % 1) + 1) % 1 : NOON
 let cycling = values.cycle
 // The benchmark uses the same world every run, so runs compare.
 let seed = values.seed ? Number(values.seed) : values.benchmark ? 1 : Math.floor(Math.random() * 1e6)
-let world = env.generate(seed, size)
+/** The environment as generated, and with the dropped boxes: what the player collides with. */
+let generated = env.generate(seed, size)
+let world: EnvironmentScene = generated
 let summary = world.summary
+/** Orbiting, where a click drops a box instead of naming what is there. */
+let boxMode = false
+let gravity = true
+let boxes: DroppedBox[] = []
 let view: CameraView = structuredClone(env.camera ?? DEFAULT_VIEW)
 let playerKind: PlayerKind | null = null
 let pose: PlayerPose | undefined
@@ -246,10 +254,12 @@ function statusBar(loading?: string) {
 
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
-  const moves = !playerKind
-    ? 'orbit: WASD look · Q/E zoom · click names it'
-    : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
+  const moves = boxMode
+    ? `boxes: WASD look · Q/E zoom · click drops a box · G gravity ${gravity ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
+    : !playerKind
+        ? 'orbit: WASD look · Q/E zoom · click names it'
+        : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · 4 boxes · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
@@ -263,6 +273,20 @@ function layout() {
   rows = Math.max(1, process.stdout.rows - 2)
   dirty = true
   showBars()
+}
+
+/** Hands the boxes to the tracer and to the player's collisions. */
+function applyBoxes(next: DroppedBox[]) {
+  boxes = next
+  world = withBoxes(generated, boxes.map(b => b.box))
+  tracer.setBoxes(boxes.map(b => b.box))
+  dirty = true
+}
+
+/** Orbit, the boxes mode or a player: one at a time. */
+function play(kind: PlayerKind | null, dropsBoxes = false) {
+  boxMode = dropsBoxes
+  spawn(kind)
 }
 
 function spawn(kind: PlayerKind | null) {
@@ -287,7 +311,9 @@ function spawn(kind: PlayerKind | null) {
 
 /** Builds the current environment for `seed` and puts the player somewhere it fits. */
 function rebuild() {
-  world = env.generate(seed, size)
+  generated = env.generate(seed, size)
+  // A new world starts without boxes.
+  applyBoxes([])
   tracer.setScene(env.id, seed, size)
   // A new color for the player too, spawned fresh in the new world.
   const kind = playerKind
@@ -330,9 +356,12 @@ const input = createInput(process.stdin, process.stdout, {
   onKey(name) {
     if (name === 'escape' || name === 'ctrl+c') quit()
     else if (values.benchmark) return
-    else if (name === '1') spawn(null)
-    else if (name === '2') spawn('dragon')
-    else if (name === '3') spawn('car')
+    else if (name === '1') play(null)
+    else if (name === '2') play('dragon')
+    else if (name === '3') play('car')
+    else if (name === '4') play(null, true)
+    else if (name === 'g' && boxMode) gravity = !gravity
+    else if (name === 'x' && boxMode) applyBoxes([])
     else if (name === 'n') newWorld()
     else if (name === 'tab') cycleEnvironment(1)
     else if (name === 'shift+tab') cycleEnvironment(-1)
@@ -357,12 +386,18 @@ let inspected: Picked | undefined
 /** The camera of the frame on screen: a click picks in what is shown. */
 let lastCamera: Camera | undefined
 
-/** Names what is under cell (x, y) of the terminal, in the status bar. */
+/** Names what is under cell (x, y) of the terminal, in the status bar, or drops a box there. */
 async function inspect(x: number, y: number) {
   // Terminal row 0 is the status bar; the frame starts below it.
   const v = (y - 1 + 0.5) / rows
   if (!lastCamera || v < 0 || v > 1) return
-  inspected = (await tracer.pick(lastCamera, (x + 0.5) / cols, v)) ?? undefined
+  const picked = await tracer.pick(lastCamera, (x + 0.5) / cols, v)
+  if (boxMode) {
+    if (picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked)])
+    showBars()
+    return
+  }
+  inspected = picked ?? undefined
   showBars()
 }
 
@@ -414,6 +449,10 @@ function step(dt: number) {
     dirty = true
   }
   style.sky = hexToBytes(lightingAt(timeOfDay, env.sky).sky)
+  if (gravity) {
+    const fallen = fallBoxes(boxes, dt)
+    if (fallen) applyBoxes(fallen)
+  }
   if (playerKind && pose) {
     const player = getPlayer(playerKind)
     const from = pose

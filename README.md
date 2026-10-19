@@ -39,7 +39,7 @@ Click anything to see what it is and how far away: a building and its floors, a 
 
 ### Dropping boxes
 
-The panel's `Boxes` mode orbits like `Orbit`, but a click drops a box of random size and color instead of naming what is there: onto the roof or box you clicked, under a ceiling, or against the wall you clicked with its middle at the click's height. With **Gravity** on, boxes fall at 9.81 m/s² onto what is below them, so they stack into towers; turn it off and they stay where they appear, in the air if need be, until it is turned on again. The boxes stay when you switch to the dragon or the car, which bump into them like anything else. **Clear boxes** removes them, and a new seed or size starts without any. They are only added on top of the generated scene: the ray tracer rebuilds its grid of primitives and the 3D view moves one instanced mesh, without generating the environment again (see `app/lib/boxes.ts`). Browser only for now.
+The panel's `Boxes` mode orbits like `Orbit`, but a click drops a box of random size and color instead of naming what is there: onto the roof or box you clicked, under a ceiling, or against the wall you clicked with its middle at the click's height. With **Gravity** on, boxes fall at 9.81 m/s² onto what is below them, so they stack into towers; turn it off and they stay where they appear, in the air if need be, until it is turned on again. The boxes stay when you switch to the dragon or the car, which bump into them like anything else. **Clear boxes** removes them, and a new seed or size starts without any. They are only added on top of the generated scene: the ray tracer rebuilds its grid of primitives and the 3D view moves one instanced mesh, without generating the environment again (see `app/lib/boxes.ts`). The terminal has it too, on `4`.
 
 ### Riding a dragon or a car
 
@@ -55,7 +55,7 @@ yarn ascii forest --seed 42
 yarn ascii --help       # every option
 ```
 
-`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser and a click names what is under it, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+`1` orbits, `2` rides the dragon and `3` the car. `4` is the boxes mode: a click drops a box, `G` turns gravity on and off and `X` clears them. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser and a click names what is under it, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
 
 To publish a new version to npm, follow the versioning and release steps in `AGENTS.md`. The build bundles `cli/` and the code it uses from `app/` into two files with no dependencies.
 
