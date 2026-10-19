@@ -10,10 +10,11 @@
  *   and colors itself, the same steps as cellStyle.ts and outlines.ts (and glyphs.wgsl.ts for
  *   the GPU tracer), so the CPU does no per-cell work at all.
  */
-import { DITHER_STEP, MIN_OUTLINE_STRENGTH, MONO, RAMP, type Cells } from './cellStyle'
+import { BAYER, FLAT_NY, MIN_OUTLINE_STRENGTH, MONO, OUTLINE_GLYPH, RAMP_GLYPHS, RAMP_LENGTHS, RAMP_STARTS, STEEP_NY, type Cells } from './cellStyle'
 import { CREASE_DOT, DEPTH_MARGIN, DEPTH_RATIO } from './outlines'
 
 const f = (n: number) => (Number.isInteger(n) ? n.toFixed(1) : String(n))
+const ints = (a: number[]) => `int[${a.length}](${a.join(', ')})`
 
 const VERTEX = `#version 300 es
 void main() {
@@ -77,7 +78,13 @@ uniform sampler2D normals;
 uniform int flags;
 uniform vec3 look; // fog near, far; glyph shade
 
-const int RAMP_LENGTH = ${RAMP.length};
+const int RAMP_GLYPHS[${RAMP_GLYPHS.length}] = ${ints(RAMP_GLYPHS)};
+const int RAMP_STARTS[${RAMP_STARTS.length}] = ${ints(RAMP_STARTS)};
+const int RAMP_LENGTHS[${RAMP_LENGTHS.length}] = ${ints(RAMP_LENGTHS)};
+const int BAYER[16] = ${ints(BAYER)};
+const int FLAT_NY = ${FLAT_NY};
+const int STEEP_NY = ${STEEP_NY};
+const int OUTLINE_GLYPH = ${OUTLINE_GLYPH};
 const float DEPTH_RATIO = ${f(DEPTH_RATIO)};
 const float DEPTH_MARGIN = ${f(DEPTH_MARGIN)};
 const float CREASE_DOT = ${f(CREASE_DOT)};
@@ -87,15 +94,18 @@ const float PI = 3.141592653589793;
 
 float depthAt(ivec2 c) { return texelFetch(depths, c, 0).r; }
 
-// dither() in cellStyle.ts.
-int dither(ivec2 c) {
-  uint h = (uint(c.x) * 0x27D4EB2Du) ^ (uint(c.y) * 0x165667B1u);
-  h = (h ^ (h >> 15u)) * 0x2C1B3C6Du;
-  h ^= h >> 12u;
-  return int(floor((float(h & 0xFFFFu) / 65536.0 - 0.5) * ${f(DITHER_STEP)} + 0.5));
-}
 // The tracer's normals, x 127, as findOutlines() compares them.
 vec3 normalAt(ivec2 c) { return round(max(texelFetch(normals, c, 0).rgb, -1.0) * 127.0); }
+
+// rampFor() and rampStep() in cellStyle.ts: the shading glyph for ink v (1..255).
+int shadeGlyph(int v, ivec2 c) {
+  int up = int(abs(normalAt(c).y));
+  int k = up >= FLAT_NY ? 1 : up <= STEEP_NY ? 2 : 0;
+  int len = RAMP_LENGTHS[k];
+  int b = BAYER[(c.y & 3) * 4 + (c.x & 3)];
+  int n = max(0, 32 * v * len + (2 * b - 15) * 255);
+  return RAMP_GLYPHS[RAMP_STARTS[k] + clamp(n / 8160, 1, len - 1)];
+}
 
 // findOutlines() in outlines.ts, for one cell: 0 for none, else 1..5 for OUTLINE_CHARS.
 int outline(ivec2 c) {
@@ -150,8 +160,7 @@ void main() {
   }
   // pickGlyphs() and cellColors() in cellStyle.ts.
   int cellInk = int(texelFetch(ink, c, 0).r * 255.0 + 0.5);
-  int glyph = min(RAMP_LENGTH - 1, (cellInk * RAMP_LENGTH) / 255);
-  if (glyph != 0) glyph = max(1, min(RAMP_LENGTH - 1, (clamp(cellInk + dither(c), 1, 255) * RAMP_LENGTH) / 255));
+  int glyph = cellInk == 0 ? 0 : shadeGlyph(cellInk, c);
   float edge = 0.0;
   float d = depthAt(c);
   if ((flags & ${FLAGS.outlines}) != 0 && !isinf(d)) {
@@ -159,7 +168,7 @@ void main() {
     if (code != 0) {
       float strength = 1.0 - clamp((d - look.x) / (look.y - look.x), 0.0, 1.0);
       if (strength >= MIN_OUTLINE_STRENGTH) {
-        glyph = RAMP_LENGTH + code - 1;
+        glyph = OUTLINE_GLYPH + code - 1;
         edge = strength;
       }
     }

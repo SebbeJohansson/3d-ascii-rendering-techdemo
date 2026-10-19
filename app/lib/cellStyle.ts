@@ -5,38 +5,53 @@
  */
 import { findOutlines, OUTLINE_CHARS } from './outlines'
 
-// Sparse to dense. The first character is a space so the sky stays blank.
-export const RAMP = ' .\'`^",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$'
-/** Every character a cell can get: the ramp, then the outline characters. */
-export const GLYPHS = RAMP + OUTLINE_CHARS
-// Ink (0..255) to ramp index, so the draw loops do one table lookup per cell.
-const GLYPH = new Uint8Array(256).map((_, v) => Math.min(RAMP.length - 1, Math.floor((v / 255) * RAMP.length)))
-/** One ramp step in ink. */
-export const DITHER_STEP = 255 / RAMP.length
+// Shading ramps, sparse to dense, each step a denser version of the one before so neighboring
+// cells never clash. The first character is a space so the sky stays blank. A cell's surface
+// picks the ramp: strokes that lie along it read as that surface.
+/** Slopes and roofs, and the shader view, which has no normals. */
+export const RAMP = ' .:-=+*#%@'
+/** Faces up (sea, flat ground): horizontal strokes. */
+const FLAT_RAMP = ' .-~=+*#'
+/** Near vertical (walls, cliffs): vertical strokes. */
+const STEEP_RAMP = ' .:!|I#'
+const RAMPS = [RAMP, FLAT_RAMP, STEEP_RAMP]
+/** Each shading character once. */
+const SHADES = [...new Set(RAMPS.join(''))].join('')
+/** Every character a cell can get: the shading characters, then the outline characters. */
+export const GLYPHS = SHADES + OUTLINE_CHARS
+/** Glyph of outline code 1 (see outlines.ts). */
+export const OUTLINE_GLYPH = SHADES.length
+/** RAMPS back to back as GLYPHS indices, with where each starts and how long it is, for the shaders. */
+export const RAMP_GLYPHS = RAMPS.flatMap(ramp => [...ramp].map(c => SHADES.indexOf(c)))
+export const RAMP_STARTS = RAMPS.map((_, k) => RAMPS.slice(0, k).join('').length)
+export const RAMP_LENGTHS = RAMPS.map(ramp => ramp.length)
+/** Normals are ×127: a surface with |ny| at least FLAT_NY faces up (~0.85), at most STEEP_NY is steep (~0.35). */
+export const FLAT_NY = 108
+export const STEEP_NY = 44
 
-/**
- * Ink offset for cell (x, y), up to half a ramp step either way. Flat surfaces like the sea
- * change ink slowly, so without it a whole row switches character at once and the sea shows
- * wide bands; with it, neighboring cells cross to the next character at different points.
- * The noise is an integer hash of the cell, so glyphGl.ts and gpu/glyphs.wgsl.ts get exactly
- * the same offsets; smooth noise formulas left visible diagonal patterns on the coarse grid.
- */
-export function dither(x: number, y: number) {
-  let h = (Math.imul(x, 0x27D4EB2D) ^ Math.imul(y, 0x165667B1)) >>> 0
-  h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D) >>> 0
-  h = (h ^ (h >>> 12)) >>> 0
-  return Math.floor(((h & 0xFFFF) / 65536 - 0.5) * DITHER_STEP + 0.5)
+/** Which of RAMPS a surface with this normal y (×127) is drawn with. */
+export function rampFor(ny: number) {
+  const up = Math.abs(ny)
+  return up >= FLAT_NY ? 1 : up <= STEEP_NY ? 2 : 0
 }
 
-/** dither() for every cell of the last grid size asked for. */
-let ditherGrid = { cols: 0, rows: 0, offsets: new Int8Array(0) }
-function ditherOffsets(cols: number, rows: number) {
-  if (ditherGrid.cols !== cols || ditherGrid.rows !== rows) {
-    const offsets = new Int8Array(cols * rows)
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) offsets[y * cols + x] = dither(x, y)
-    ditherGrid = { cols, rows, offsets }
-  }
-  return ditherGrid.offsets
+/**
+ * 4×4 ordered dither. Flat surfaces like the sea change ink slowly, so without dither a whole
+ * row switches character at once and shows a wide band; with it, the two characters either
+ * side of the switch interleave in a regular pattern instead of random speckle.
+ */
+export const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+
+/**
+ * Step of a ramp `length` long for ink v (1..255) at cell (x, y): v's share of the ramp, moved
+ * by the cell's Bayer value by up to half a step either way. Integer math throughout, so
+ * glyphGl.ts and gpu/glyphs.wgsl.ts get exactly the same steps. Never 0: dither never turns a
+ * cell into sky.
+ */
+export function rampStep(v: number, length: number, x: number, y: number) {
+  const b = BAYER[(y & 3) * 4 + (x & 3)]!
+  const n = Math.max(0, 32 * v * length + (2 * b - 15) * 255)
+  return Math.min(length - 1, Math.max(1, Math.floor(n / 8160)))
 }
 
 // Dark ink for the single-color mode: readable on a light sky.
@@ -93,41 +108,47 @@ function isLight(r: number, g: number, b: number) {
  * Cells with glyph 0 are left as sky. `edges` is scratch space, one byte per cell.
  */
 export function pickGlyphs(cells: Cells, cols: number, rows: number, options: StyleOptions, glyphs: Uint8Array, edgeStrength: Float32Array, edges: Uint8Array) {
-  const { ink, depths } = cells
-  const glyphFor = glyphTable(ink, options.stretch)
-  const offsets = ditherOffsets(cols, rows)
-  for (let i = 0; i < ink.length; i++) {
-    const v = ink[i]!
-    // Cells that hit something keep a character: dithering never turns one into sky.
-    glyphs[i] = glyphFor[v]! && Math.max(1, glyphFor[Math.min(255, Math.max(1, v + offsets[i]!))]!)
+  const { ink, depths, normals } = cells
+  const inkFor = inkTable(ink, options.stretch)
+  for (let y = 0, i = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++, i++) {
+      const v = inkFor[ink[i]!]!
+      if (!v) {
+        glyphs[i] = 0
+        continue
+      }
+      const k = rampFor(normals[i * 3 + 1]!)
+      glyphs[i] = RAMP_GLYPHS[RAMP_STARTS[k]! + rampStep(v, RAMP_LENGTHS[k]!, x, y)]!
+    }
   }
   edgeStrength.fill(0)
   if (!options.outlines) return
-  findOutlines(cols, rows, depths, cells.normals, edges)
+  findOutlines(cols, rows, depths, normals, edges)
   const { fogNear, fogFar } = options
   for (let i = 0; i < edges.length; i++) {
     if (!edges[i]) continue
     const strength = 1 - Math.min(1, Math.max(0, (depths[i]! - fogNear) / (fogFar - fogNear)))
     if (strength < MIN_OUTLINE_STRENGTH) continue
-    glyphs[i] = RAMP.length + edges[i]! - 1
+    glyphs[i] = OUTLINE_GLYPH + edges[i]! - 1
     edgeStrength[i] = strength
   }
 }
 
 // Share of cells ignored at each end when stretching, so a few outliers don't set the range.
 const STRETCH_CLIP = 0.01
+const SAME_INK = new Uint8Array(256).map((_, v) => v)
 
 /**
- * Ink to ramp index for one frame. Without stretching it is the fixed GLYPH table; with it,
- * the frame's ink range (from a histogram, ignoring the outer 1%) maps onto the whole ramp.
+ * Ink to the ink the ramps see, for one frame. Without stretching it is unchanged; with it,
+ * the frame's ink range (from a histogram, ignoring the outer 1%) maps onto 1..255.
  * Ink 0 stays 0: those cells hit nothing.
  */
-function glyphTable(ink: Uint8Array, stretch: boolean) {
-  if (!stretch) return GLYPH
+function inkTable(ink: Uint8Array, stretch: boolean) {
+  if (!stretch) return SAME_INK
   const histogram = new Uint32Array(256)
   for (let i = 0; i < ink.length; i++) histogram[ink[i]!]!++
   const total = ink.length - histogram[0]!
-  if (!total) return GLYPH
+  if (!total) return SAME_INK
 
   const clip = total * STRETCH_CLIP
   let low = 1
@@ -138,7 +159,7 @@ function glyphTable(ink: Uint8Array, stretch: boolean) {
   const table = new Uint8Array(256)
   for (let v = 1; v < 256; v++) {
     const k = high > low ? Math.min(1, Math.max(0, (v - low) / (high - low))) : 1
-    table[v] = 1 + Math.min(RAMP.length - 2, Math.floor(k * (RAMP.length - 1)))
+    table[v] = 1 + Math.round(k * 254)
   }
   return table
 }

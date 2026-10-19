@@ -10,10 +10,11 @@
  *
  * Stretched contrast and the lens still go through the CPU, which needs the whole frame.
  */
-import { DITHER_STEP, MIN_OUTLINE_STRENGTH, MONO, RAMP } from '../cellStyle'
+import { BAYER, FLAT_NY, MIN_OUTLINE_STRENGTH, MONO, OUTLINE_GLYPH, RAMP_GLYPHS, RAMP_LENGTHS, RAMP_STARTS, STEEP_NY } from '../cellStyle'
 import { CREASE_DOT, DEPTH_MARGIN, DEPTH_RATIO } from '../outlines'
 
 const f = (n: number) => (Number.isInteger(n) ? n.toFixed(1) : String(n))
+const ints = (a: number[]) => `array<i32, ${a.length}>(${a.join(', ')})`
 
 export const GLYPH_WORKGROUP = 8
 
@@ -36,7 +37,14 @@ struct Glyphs {
 @group(0) @binding(3) var<storage, read> styled: array<u32>;
 @group(0) @binding(4) var atlas: texture_2d<f32>;
 
-const RAMP_LENGTH = ${RAMP.length}u;
+// Private, not const: shaders index them with runtime values.
+var<private> RAMP_GLYPHS = ${ints(RAMP_GLYPHS)};
+var<private> RAMP_STARTS = ${ints(RAMP_STARTS)};
+var<private> RAMP_LENGTHS = ${ints(RAMP_LENGTHS)};
+var<private> BAYER = ${ints(BAYER)};
+const FLAT_NY = ${FLAT_NY};
+const STEEP_NY = ${STEEP_NY};
+const OUTLINE_GLYPH = ${OUTLINE_GLYPH}u;
 const SKY_BITS = 0x7f800000u;
 const DEPTH_RATIO = ${f(DEPTH_RATIO)};
 const DEPTH_MARGIN = ${f(DEPTH_MARGIN)};
@@ -45,17 +53,19 @@ const MIN_OUTLINE_STRENGTH = ${f(MIN_OUTLINE_STRENGTH)};
 const MONO = vec3f(${MONO.map(f).join(', ')});
 const PI = 3.141592653589793;
 
-// dither() in cellStyle.ts.
-fn dither(x: u32, y: u32) -> i32 {
-  var h = (x * 0x27D4EB2Du) ^ (y * 0x165667B1u);
-  h = (h ^ (h >> 15u)) * 0x2C1B3C6Du;
-  h ^= h >> 12u;
-  return i32(floor((f32(h & 0xFFFFu) / 65536.0 - 0.5) * ${f(DITHER_STEP)} + 0.5));
-}
-
 fn normalAt(i: u32) -> vec3f {
   let n = i32(cells[i * 3u + 2u]);
   return vec3f(f32(extractBits(n, 0u, 8u)), f32(extractBits(n, 8u, 8u)), f32(extractBits(n, 16u, 8u)));
+}
+
+// rampFor() and rampStep() in cellStyle.ts: the shading glyph for ink v (1..255) of cell i.
+fn shadeGlyph(v: i32, i: u32, x: u32, y: u32) -> u32 {
+  let up = abs(extractBits(i32(cells[i * 3u + 2u]), 8u, 8u));
+  let k = select(select(0, 2, up <= STEEP_NY), 1, up >= FLAT_NY);
+  let len = RAMP_LENGTHS[k];
+  let b = BAYER[(y & 3u) * 4u + (x & 3u)];
+  let n = max(0, 32 * v * len + (2 * b - 15) * 255);
+  return u32(RAMP_GLYPHS[RAMP_STARTS[k] + clamp(n / 8160, 1, len - 1)]);
 }
 
 // findOutlines() in outlines.ts, for one cell: 0 for none, else 1..5 for OUTLINE_CHARS.
@@ -118,11 +128,8 @@ fn style(@builtin(global_invocation_id) id: vec3u) {
   let i = id.y * cols + id.x;
   let flags = G.traced.z;
   let c = cells[i * 3u];
-  var glyph = min(RAMP_LENGTH - 1u, ((c >> 24u) * RAMP_LENGTH) / 255u);
-  if (glyph != 0u) {
-    let dithered = u32(clamp(i32(c >> 24u) + dither(id.x, id.y), 1, 255));
-    glyph = max(1u, min(RAMP_LENGTH - 1u, (dithered * RAMP_LENGTH) / 255u));
-  }
+  var glyph = 0u;
+  if ((c >> 24u) != 0u) { glyph = shadeGlyph(i32(c >> 24u), i, id.x, id.y); }
   var edge = 0.0;
   if ((flags & ${GLYPH_FLAGS.outlines}u) != 0u && cells[i * 3u + 1u] != SKY_BITS) {
     let code = outline(i32(id.x), i32(id.y), i32(cols), i32(rows));
@@ -130,7 +137,7 @@ fn style(@builtin(global_invocation_id) id: vec3u) {
       let d = bitcast<f32>(cells[i * 3u + 1u]);
       let strength = 1.0 - clamp((d - G.look.x) / (G.look.y - G.look.x), 0.0, 1.0);
       if (strength >= MIN_OUTLINE_STRENGTH) {
-        glyph = RAMP_LENGTH + code - 1u;
+        glyph = OUTLINE_GLYPH + code - 1u;
         edge = strength;
       }
     }
