@@ -142,7 +142,9 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
       }
     }
     if (!parts.length) return { bytes: 0, writeMs: 0 }
-    const text = parts.join('')
+    // Synchronized output (2026): the terminal shows the frame once it has all of it, not half
+    // drawn. Then a status request (5n), answered once the terminal has read everything before it.
+    const text = `${ESC}?2026h${parts.join('')}${ESC}?2026l${ESC}5n`
     const start = performance.now()
     out.write(text)
     return { bytes: Buffer.byteLength(text), writeMs: performance.now() - start }

@@ -33,6 +33,8 @@ export interface InputHandlers {
   /** A key went down (not called for repeats). Names: 'w', 'up', 'space', 'escape', 'ctrl+c', ... */
   onKey: (name: string) => void
   onMouse: (event: MouseEvent) => void
+  /** The terminal answered a status request (CSI 5n): it has read everything written before it. */
+  onStatus?: () => void
   /** Gets every raw sequence the terminal sends, for debugging input. */
   onRaw?: (sequence: string) => void
 }
@@ -51,7 +53,7 @@ const PASTE_END = '\x1b[201~'
 /** Without bracketed paste: this many plain characters arriving at once can only be a paste. */
 const PASTE_LENGTH = 4
 
-export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { onKey, onMouse, onRaw }: InputHandlers) {
+export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, { onKey, onMouse, onStatus, onRaw }: InputHandlers) {
   /** Key name → time (ms) until which it counts as held. */
   const held = new Map<string, number>()
   /** Whether the kitty protocol was turned on, and whether a release has actually arrived. */
@@ -100,6 +102,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
       return
     }
     if (/^\x1b\[\?[\d;]*c$/.test(t)) return
+    if (t === '\x1b[0n') return onStatus?.()
     // SGR mouse: CSI < button ; x ; y M (press or motion) or m (release).
     if ((m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(t))) {
       const b = Number(m[1])

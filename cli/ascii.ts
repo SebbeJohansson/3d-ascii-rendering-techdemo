@@ -134,21 +134,36 @@ function onFrame(frame: TracedFrame) {
   const { bytes, writeMs } = screen.draw(frame, style)
   const end = performance.now()
   meter.frame(frame.traceMs + end - start, { trace: frame.traceMs, draw: end - start })
+  if (bytes && paced) unread = { since: end }
   if (values.benchmark) {
     benchStart ??= end
-    benchFrames.push({ at: end, trace: frame.traceMs, build: end - start - writeMs, write: writeMs, bytes, drain: drainMs })
-    drainMs = 0
+    benchFrames.push({ at: end, trace: frame.traceMs, build: end - start - writeMs, write: writeMs, bytes, terminal: 0 })
   }
 }
 
-interface BenchFrame { at: number, trace: number, build: number, write: number, bytes: number, drain: number }
+interface BenchFrame { at: number, trace: number, build: number, write: number, bytes: number, terminal: number }
 /** When the first frame was drawn: the camera path starts there. */
 let benchStart: number | undefined
 const benchFrames: BenchFrame[] = []
 const benchFrom = structuredClone(view)
-/** Time the next frame was held back because the terminal hadn't taken the last one yet. */
-let drainMs = 0
-let drainSince: number | undefined
+/**
+ * The last frame the terminal hasn't confirmed reading yet. The next waits for it, so frames
+ * can't pile up in the terminal and lag behind input. Given up on after UNREAD_TIMEOUT_MS, for
+ * terminals that don't answer.
+ */
+let unread: { since: number } | undefined
+const UNREAD_TIMEOUT_MS = 250
+/** Off once the terminal has left a status request unanswered, without having answered one before. */
+let paced = true
+let answered = false
+
+function onStatus() {
+  answered = true
+  if (!unread) return
+  const last = benchFrames.at(-1)
+  if (last && values.benchmark) last.terminal = performance.now() - unread.since
+  unread = undefined
+}
 
 /** Leaves the full screen and prints how fast the measured part of the run was. */
 function finishBenchmark() {
@@ -158,7 +173,7 @@ function finishBenchmark() {
   const fps = measured.length / seconds
   // The slowest half second.
   const windows = Array.from({ length: seconds * 2 }, (_, w) => measured.filter(f => Math.floor((f.at - benchStart! - BENCH_WARMUP * 1000) / 500) === w).length * 2)
-  const [trace, build, write, drain] = [avg('trace'), avg('build'), avg('write'), avg('drain')]
+  const [trace, build, write, terminal] = [avg('trace'), avg('build'), avg('write'), avg('terminal')]
   const frameMs = 1000 / Math.max(fps, 1e-9)
   const ms = (n: number) => `${n.toFixed(1).padStart(6)} ms`
   const lines = [
@@ -168,9 +183,9 @@ function finishBenchmark() {
     `  per frame    ${ms(frameMs)}`,
     `    tracing    ${ms(trace)}`,
     `    ANSI       ${ms(build)}  building the escape codes`,
-    `    terminal   ${ms(write)}  writing ${(avg('bytes') / 1024).toFixed(0)} KB (${((avg('bytes') * fps) / 1024 / 1024).toFixed(1)} MB/s)`,
-    `    backlog    ${ms(drain)}  waiting for the terminal to take the last frame`,
-    `    idle       ${ms(Math.max(0, frameMs - trace - build - write - drain))}  waiting for the next tick (at most ${Math.round(1000 / TICK_MS)} fps)`,
+    `    writing    ${ms(write)}  ${(avg('bytes') / 1024).toFixed(0)} KB (${((avg('bytes') * fps) / 1024 / 1024).toFixed(1)} MB/s)`,
+    `    terminal   ${ms(terminal)}  until the terminal had read the frame`,
+    `    idle       ${ms(Math.max(0, frameMs - trace - build - write - terminal))}  waiting for the next tick (at most ${Math.round(1000 / TICK_MS)} fps)`,
   ]
   quit(0, lines.join('\n'))
 }
@@ -267,6 +282,7 @@ function logInput(sequence: string) {
 
 const input = createInput(process.stdin, process.stdout, {
   onRaw: logInput,
+  onStatus,
   onKey(name) {
     if (name === 'escape' || name === 'ctrl+c') quit()
     else if (values.benchmark) return
@@ -386,12 +402,12 @@ function tick() {
   last = now
   step(dt)
   meter.tick()
-  // One frame in flight at a time; a write still draining to the terminal also waits.
-  const ready = dirty && cols && !tracer.busy
-  if (ready && process.stdout.writableNeedDrain) drainSince ??= now
-  if (ready && process.stdout.writableNeedDrain === false) {
-    if (drainSince !== undefined) drainMs += now - drainSince
-    drainSince = undefined
+  // One frame in flight at a time; it also waits until the terminal has read the last one.
+  if (unread && now - unread.since > UNREAD_TIMEOUT_MS) {
+    unread = undefined
+    paced = answered
+  }
+  if (dirty && cols && !tracer.busy && !unread && process.stdout.writableNeedDrain === false) {
     dirty = false
     lastCamera = { position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }
     tracer.render(lastCamera, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
