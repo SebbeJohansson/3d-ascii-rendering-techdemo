@@ -3,7 +3,10 @@ import { dropBox, type DropSpot } from '~/lib/boxes'
 
 const NONE: Primitive[] = []
 
-/** Whether a click drops a box instead of naming what is there. Shared by every view. */
+/**
+ * The boxes mode: orbiting, where a click drops a box instead of naming what is there. Picked
+ * in the panel instead of a player. Shared by every view.
+ */
 export function useBoxMode() {
   return useState('box-mode', () => false)
 }

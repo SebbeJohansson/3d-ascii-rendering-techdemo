@@ -39,7 +39,7 @@ Click anything to see what it is and how far away: a building and its floors, a 
 
 ### Dropping boxes
 
-Tick **Click to drop boxes** and a click drops a box of random size and color instead: onto the roof or box you clicked, or against the wall you clicked and down to whatever is below it, so boxes stack into towers. The dragon and the car bump into them like anything else. **Clear boxes** removes them, and a new seed or size starts without any. They are only added on top of the generated scene: the ray tracer rebuilds its grid of primitives and the 3D view one instanced mesh, without generating the environment again (see `app/lib/boxes.ts`). Browser only for now.
+The panel's `Boxes` mode orbits like `Orbit`, but a click drops a box of random size and color instead of naming what is there: onto the roof or box you clicked, or against the wall you clicked and down to whatever is below it, so boxes stack into towers. The boxes stay when you switch to the dragon or the car, which bump into them like anything else. **Clear boxes** removes them, and a new seed or size starts without any. They are only added on top of the generated scene: the ray tracer rebuilds its grid of primitives and the 3D view one instanced mesh, without generating the environment again (see `app/lib/boxes.ts`). Browser only for now.
 
 ### Riding a dragon or a car
 

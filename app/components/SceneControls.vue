@@ -3,7 +3,7 @@ import { ENVIRONMENTS, type Environment } from '~/environments'
 import type { FramePerf } from '~/lib/frameMeter'
 import type { ViewMode } from '~/composables/useBenchmark'
 import { DAY_LENGTH, formatTimeOfDay } from '~/environments/lighting'
-import { getPlayer, PLAYERS } from '~/players'
+import { getPlayer, PLAYERS, type PlayerKind } from '~/players'
 
 const props = defineProps<{
   env: Environment
@@ -17,8 +17,12 @@ const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
 const boxMode = useBoxMode()
 const { boxes, clear: clearBoxes } = useBoxes(props.env)
-/** What a click does, for the key hints. */
-const clickDoes = computed(() => (boxMode.value ? 'click to drop a box' : 'click to name what\'s there'))
+
+/** Orbit, the boxes mode (orbit where a click drops a box) or a player: one at a time. */
+function play(kind: PlayerKind | null, boxes = false) {
+  playerKind.value = kind
+  boxMode.value = boxes
+}
 const { time: timeOfDay, cycling } = useTimeOfDay()
 
 const benchmark = useBenchmark()
@@ -52,10 +56,13 @@ function randomize() {
       </NuxtLink>
     </nav>
     <nav>
-      <button type="button" :class="{ active: !playerKind }" @click="playerKind = null">
+      <button type="button" :class="{ active: !playerKind && !boxMode }" @click="play(null)">
         Orbit
       </button>
-      <button v-for="p in PLAYERS" :key="p.id" type="button" :class="{ active: playerKind === p.id }" @click="playerKind = p.id">
+      <button type="button" :class="{ active: boxMode }" @click="play(null, true)">
+        Boxes
+      </button>
+      <button v-for="p in PLAYERS" :key="p.id" type="button" :class="{ active: playerKind === p.id }" @click="play(p.id)">
         {{ p.name }}
       </button>
     </nav>
@@ -64,11 +71,14 @@ function randomize() {
       <template v-if="getPlayer(playerKind).flies">
         · <kbd>Space</kbd> up · <kbd>Shift</kbd> down
       </template>
-      · drag to look · scroll to zoom · {{ clickDoes }}
+      · drag to look · scroll to zoom · click to name what's there
     </p>
     <p v-else class="keys">
-      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ clickDoes }}
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ boxMode ? 'click to drop a box onto what\'s there' : 'click to name what\'s there' }}
     </p>
+    <button v-if="boxMode && boxes.length" type="button" class="link" @click="clearBoxes">
+      Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
+    </button>
     <label>
       Seed
       <input v-model.number="seed" type="number">
@@ -85,13 +95,6 @@ function randomize() {
       <input v-model="cycling" type="checkbox">
       Day and night cycle ({{ DAY_LENGTH / 60 }} min day)
     </label>
-    <label class="toggle">
-      <input v-model="boxMode" type="checkbox">
-      Click to drop boxes
-    </label>
-    <button v-if="boxes.length" type="button" class="link" @click="clearBoxes">
-      Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
-    </button>
     <slot />
     <button type="button" class="primary" @click="randomize">
       New {{ env.name.toLowerCase() }}
