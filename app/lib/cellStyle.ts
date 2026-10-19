@@ -11,6 +11,34 @@ export const RAMP = ' .\'`^",:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkha
 export const GLYPHS = RAMP + OUTLINE_CHARS
 // Ink (0..255) to ramp index, so the draw loops do one table lookup per cell.
 const GLYPH = new Uint8Array(256).map((_, v) => Math.min(RAMP.length - 1, Math.floor((v / 255) * RAMP.length)))
+/** One ramp step in ink. */
+export const DITHER_STEP = 255 / RAMP.length
+
+/**
+ * Ink offset for cell (x, y), up to half a ramp step either way. Flat surfaces like the sea
+ * change ink slowly, so without it a whole row switches character at once and the sea shows
+ * wide bands; with it, neighboring cells cross to the next character at different points.
+ * The noise is an integer hash of the cell, so glyphGl.ts and gpu/glyphs.wgsl.ts get exactly
+ * the same offsets; smooth noise formulas left visible diagonal patterns on the coarse grid.
+ */
+export function dither(x: number, y: number) {
+  let h = (Math.imul(x, 0x27D4EB2D) ^ Math.imul(y, 0x165667B1)) >>> 0
+  h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D) >>> 0
+  h = (h ^ (h >>> 12)) >>> 0
+  return Math.floor(((h & 0xFFFF) / 65536 - 0.5) * DITHER_STEP + 0.5)
+}
+
+/** dither() for every cell of the last grid size asked for. */
+let ditherGrid = { cols: 0, rows: 0, offsets: new Int8Array(0) }
+function ditherOffsets(cols: number, rows: number) {
+  if (ditherGrid.cols !== cols || ditherGrid.rows !== rows) {
+    const offsets = new Int8Array(cols * rows)
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) offsets[y * cols + x] = dither(x, y)
+    ditherGrid = { cols, rows, offsets }
+  }
+  return ditherGrid.offsets
+}
+
 // Dark ink for the single-color mode: readable on a light sky.
 export const MONO: [number, number, number] = [0x1D, 0x2B, 0x38]
 
@@ -67,7 +95,12 @@ function isLight(r: number, g: number, b: number) {
 export function pickGlyphs(cells: Cells, cols: number, rows: number, options: StyleOptions, glyphs: Uint8Array, edgeStrength: Float32Array, edges: Uint8Array) {
   const { ink, depths } = cells
   const glyphFor = glyphTable(ink, options.stretch)
-  for (let i = 0; i < ink.length; i++) glyphs[i] = glyphFor[ink[i]!]!
+  const offsets = ditherOffsets(cols, rows)
+  for (let i = 0; i < ink.length; i++) {
+    const v = ink[i]!
+    // Cells that hit something keep a character: dithering never turns one into sky.
+    glyphs[i] = glyphFor[v]! && Math.max(1, glyphFor[Math.min(255, Math.max(1, v + offsets[i]!))]!)
+  }
   edgeStrength.fill(0)
   if (!options.outlines) return
   findOutlines(cols, rows, depths, cells.normals, edges)

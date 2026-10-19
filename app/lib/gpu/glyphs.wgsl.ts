@@ -10,7 +10,7 @@
  *
  * Stretched contrast and the lens still go through the CPU, which needs the whole frame.
  */
-import { MIN_OUTLINE_STRENGTH, MONO, RAMP } from '../cellStyle'
+import { DITHER_STEP, MIN_OUTLINE_STRENGTH, MONO, RAMP } from '../cellStyle'
 import { CREASE_DOT, DEPTH_MARGIN, DEPTH_RATIO } from '../outlines'
 
 const f = (n: number) => (Number.isInteger(n) ? n.toFixed(1) : String(n))
@@ -44,6 +44,14 @@ const CREASE_DOT = ${f(CREASE_DOT)};
 const MIN_OUTLINE_STRENGTH = ${f(MIN_OUTLINE_STRENGTH)};
 const MONO = vec3f(${MONO.map(f).join(', ')});
 const PI = 3.141592653589793;
+
+// dither() in cellStyle.ts.
+fn dither(x: u32, y: u32) -> i32 {
+  var h = (x * 0x27D4EB2Du) ^ (y * 0x165667B1u);
+  h = (h ^ (h >> 15u)) * 0x2C1B3C6Du;
+  h ^= h >> 12u;
+  return i32(floor((f32(h & 0xFFFFu) / 65536.0 - 0.5) * ${f(DITHER_STEP)} + 0.5));
+}
 
 fn normalAt(i: u32) -> vec3f {
   let n = i32(cells[i * 3u + 2u]);
@@ -111,6 +119,10 @@ fn style(@builtin(global_invocation_id) id: vec3u) {
   let flags = G.traced.z;
   let c = cells[i * 3u];
   var glyph = min(RAMP_LENGTH - 1u, ((c >> 24u) * RAMP_LENGTH) / 255u);
+  if (glyph != 0u) {
+    let dithered = u32(clamp(i32(c >> 24u) + dither(id.x, id.y), 1, 255));
+    glyph = max(1u, min(RAMP_LENGTH - 1u, (dithered * RAMP_LENGTH) / 255u));
+  }
   var edge = 0.0;
   if ((flags & ${GLYPH_FLAGS.outlines}u) != 0u && cells[i * 3u + 1u] != SKY_BITS) {
     let code = outline(i32(id.x), i32(id.y), i32(cols), i32(rows));
