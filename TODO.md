@@ -17,3 +17,16 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 
 - [x] **GPU ray tracing.** Port the ray tracer to a WebGPU compute shader, with a CPU/GPU toggle and fps side by side. ~half a day
 - [x] **Click to inspect.** Click a building or tree to see what it is; the ray tracer already knows what each cell hit. ~45 min
+
+## Building and games
+
+- [ ] **Drop boxes.** A Build mode next to the car and dragon: click any surface to drop a box of random size and color there, using the hit from click to inspect. ~1–2 h
+- [ ] **Stack onto faces.** Click a box's face to stick a new box onto it, Minecraft-style, so you build in 3D directly. ~2 h
+- [ ] **Stacking tower game.** Boxes fall straight down without rotating and land on what's below; score is the tower's height. ~half a day
+- [ ] **Car smashes boxes.** Boxes tumble when the car hits them. Needs a physics library (e.g. Rapier) and rotated boxes. ~1 day
+
+## Drawing shapes
+
+- [ ] **Spin a profile.** Draw half an outline and spin it into a vase, bottle or tower. ~half a day
+- [ ] **Extrude an outline.** Draw a 2D shape on a grid and pull it up into a solid: walls, letters, logos. ~half a day
+- [ ] **Sculpt with blobs.** Place spheres that melt together, reusing the dragon's SDF and surface nets code. ~1 day
