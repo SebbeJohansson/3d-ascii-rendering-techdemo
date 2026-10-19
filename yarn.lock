@@ -12,6 +12,7 @@ __metadata:
     "@types/node": "npm:^24.19.2"
     "@types/three": "npm:^0.186.0"
     "@webgpu/types": "npm:^0.1.74"
+    esbuild: "npm:^0.28.0"
     nuxt: "npm:^4.6.1"
     three: "npm:^0.186.1"
     tsx: "npm:^4.23.15"

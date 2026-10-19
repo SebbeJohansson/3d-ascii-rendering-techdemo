@@ -38,7 +38,7 @@ The panel's `Dragon` and `Car` buttons spawn one into the current environment, w
 
 ### In a terminal
 
-The ASCII view also runs in a terminal, with the same ray tracer on Node worker threads:
+The ASCII view also runs in a terminal, with the same ray tracer on Node worker threads. Without cloning, `npx 3d-ascii` runs it (Node 20 or newer). From the repo:
 
 ```bash
 yarn ascii              # the city
@@ -47,6 +47,8 @@ yarn ascii --help       # every option
 ```
 
 `1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+
+To publish a new version to npm: bump `version` in `npm/package.json`, run `yarn build:cli`, then `npm publish` from `npm/`. The build bundles `cli/` and the code it uses from `app/` into two files with no dependencies.
 
 Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor. The status line says which one your terminal does. If input misbehaves, `--log-input FILE` records everything the terminal sends.
 

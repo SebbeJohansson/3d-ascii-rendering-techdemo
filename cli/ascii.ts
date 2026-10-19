@@ -1,5 +1,5 @@
 /**
- * The ASCII view in a terminal: `yarn ascii [city|forest|ocean|dragon] [--seed N] [--size N]`.
+ * The ASCII view in a terminal: `yarn ascii [city|forest|ocean|mountains|dragon] [--seed N] [--size N]`.
  * Same ray tracer, environments and players as the browser, drawn with ANSI colors.
  */
 import { appendFileSync, writeFileSync } from 'node:fs'
@@ -43,7 +43,8 @@ const { values, positionals } = parseArgs({
   },
 })
 
-const USAGE = `Usage: yarn ascii [${ENVIRONMENTS.map(e => e.id).join('|')}] [options]
+const COMMAND = import.meta.url.endsWith('.ts') ? 'yarn ascii' : 'npx 3d-ascii'
+const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [options]
 
   --seed N          world seed (random by default)
   --size N          environment size, as the browser's size slider

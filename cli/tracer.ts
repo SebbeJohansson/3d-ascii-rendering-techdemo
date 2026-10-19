@@ -3,7 +3,8 @@ import { createWorkerTracer, type TraceWorker, type TracerEvents } from '../app/
 
 /** A worker thread dressed up as the Web Worker the tracer expects. */
 function spawnNodeWorker(): TraceWorker {
-  const worker = new Worker(new URL('./worker.ts', import.meta.url))
+  // From source under tsx this file is tracer.ts; bundled for npm it's the worker.js next to ascii.js.
+  const worker = new Worker(new URL(import.meta.url.endsWith('.ts') ? './worker.ts' : './worker.js', import.meta.url))
   const adapter: TraceWorker = {
     postMessage: (message, transfer) => worker.postMessage(message, transfer as ArrayBuffer[]),
     onmessage: null,

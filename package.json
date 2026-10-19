@@ -10,7 +10,8 @@
     "preview": "nuxt preview",
     "typecheck": "nuxt typecheck && tsc -p cli",
     "ascii": "tsx cli/ascii.ts",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "build:cli": "esbuild cli/ascii.ts cli/worker.ts --bundle --platform=node --format=esm --target=node20 --minify --outdir=npm/dist --banner:js=\"#!/usr/bin/env node\""
   },
   "dependencies": {
     "nuxt": "^4.6.1",
@@ -20,6 +21,7 @@
     "@types/node": "^24.19.2",
     "@types/three": "^0.186.0",
     "@webgpu/types": "^0.1.74",
+    "esbuild": "^0.28.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vue-tsc": "^3.3.13"

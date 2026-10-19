@@ -1,0 +1,12 @@
+{
+  "name": "3d-ascii",
+  "version": "0.1.0",
+  "description": "Procedurally generated 3D worlds, ray traced into ASCII art in your terminal",
+  "type": "module",
+  "bin": { "3d-ascii": "dist/ascii.js" },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "keywords": ["ascii", "ray tracing", "terminal", "3d", "demo"],
+  "repository": { "type": "git", "url": "git+https://github.com/sebbejohansson/3dmodel-rendering-techdemo.git" },
+  "homepage": "https://sebbejohansson.github.io/3dmodel-rendering-techdemo/"
+}
