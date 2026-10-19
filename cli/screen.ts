@@ -33,6 +33,83 @@ function cube(r: number, g: number, b: number) {
 
 const pack = (c: Uint8Array, o: number) => (c[o]! << 16) | (c[o + 1]! << 8) | c[o + 2]!
 
+/** Decimal digits of 0..999 as bytes: numbers in escape codes are written with one lookup. */
+const DIGITS = Array.from({ length: 1000 }, (_, n) => Buffer.from(String(n)))
+const GLYPH_BYTES = [...GLYPHS].map(g => Buffer.from(g))
+const UPPER_HALF_BYTES = Buffer.from(UPPER_HALF)
+const [BYTE_ESC, BYTE_BRACKET, BYTE_SEMI] = [0x1B, 0x5B, 0x3B]
+/** The most one cell can add: a cursor move, two colors and a 3-byte character. */
+const MAX_CELL_BYTES = 64
+
+/**
+ * A frame's output, written straight into a reused byte buffer. Building a string and having
+ * Node encode it cost as much as everything else in drawing.
+ */
+function createByteWriter() {
+  let buf = Buffer.alloc(1 << 16)
+  let len = 0
+  const bytes = (b: Uint8Array) => {
+    buf.set(b, len)
+    len += b.length
+  }
+  const num = (n: number) => (n < 1000 ? bytes(DIGITS[n]!) : (len += buf.write(String(n), len, 'latin1')))
+  return {
+    get length() {
+      return len
+    },
+    reset() {
+      len = 0
+    },
+    /** Makes room for `n` more bytes. */
+    reserve(n: number) {
+      if (len + n <= buf.length) return
+      const grown = Buffer.alloc(Math.max(buf.length * 2, len + n))
+      buf.copy(grown, 0, 0, len)
+      buf = grown
+    },
+    bytes,
+    text(t: string) {
+      len += buf.write(t, len, 'latin1')
+    },
+    /** CSI y ; x H */
+    moveTo(y: number, x: number) {
+      buf[len++] = BYTE_ESC
+      buf[len++] = BYTE_BRACKET
+      num(y)
+      buf[len++] = BYTE_SEMI
+      num(x)
+      buf[len++] = 0x48
+    },
+    /** CSI 38;2;r;g;b m (or 48 for the background), or CSI 38;5;n m in 256 colors. */
+    color(layer: 38 | 48, rgb: number, trueColor: boolean) {
+      buf[len++] = BYTE_ESC
+      buf[len++] = BYTE_BRACKET
+      num(layer)
+      buf[len++] = BYTE_SEMI
+      const r = rgb >>> 16
+      const g = (rgb >>> 8) & 255
+      const b = rgb & 255
+      if (trueColor) {
+        buf[len++] = 0x32
+        buf[len++] = BYTE_SEMI
+        num(r)
+        buf[len++] = BYTE_SEMI
+        num(g)
+        buf[len++] = BYTE_SEMI
+        num(b)
+      }
+      else {
+        buf[len++] = 0x35
+        buf[len++] = BYTE_SEMI
+        num(cube(r, g, b))
+      }
+      buf[len++] = 0x6D
+    },
+    /** A copy of what was written: the buffer is reused while a write may still be pending. */
+    take: () => Buffer.from(buf.subarray(0, len)),
+  }
+}
+
 export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
   let cols = 0
   /** Terminal rows the frame takes, between the two bars. */
@@ -48,13 +125,7 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
   let edgeStrength = new Float32Array(0)
   let shownBars = ['', '']
   const colors = new Uint8Array(6)
-
-  const color = (layer: 38 | 48, rgb: number) => {
-    const r = rgb >>> 16
-    const g = (rgb >>> 8) & 255
-    const b = rgb & 255
-    return trueColor ? `${ESC}${layer};2;${r};${g};${b}m` : `${ESC}${layer};5;${cube(r, g, b)}m`
-  }
+  const w = createByteWriter()
 
   /** The grid the tracer should fill: one cell per character, or two stacked per block. */
   const traced = () => ({ cols, rows: resolution === 'blocks' ? rows * 2 : rows })
@@ -93,7 +164,10 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
     pickGlyphs(cells, grid.cols, grid.rows, options, glyphs, edgeStrength, edges)
     const blocks = resolution === 'blocks'
     const sky = (options.sky[0]! << 16) | (options.sky[1]! << 8) | options.sky[2]!
-    const parts: string[] = []
+    // Synchronized output (2026): the terminal shows the frame once it has all of it, not half drawn.
+    w.reset()
+    w.text(`${ESC}?2026h`)
+    const empty = w.length
     let fg = -1
     let bg = -1
     for (let y = 0; y < rows; y++) {
@@ -103,13 +177,13 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         const i = y * cols + x
         let packed: number
         let cellBg: number
-        let glyph: string
+        let glyph: Uint8Array
         if (blocks) {
           const top = pixel(cells, 2 * y * cols + x, options, sky)
           cellBg = pixel(cells, (2 * y + 1) * cols + x, options, sky)
           // Both halves alike: a plain space on the background says the same in fewer bytes.
           packed = top === cellBg ? 0 : (BLOCK | top) >>> 0
-          glyph = top === cellBg ? ' ' : UPPER_HALF
+          glyph = top === cellBg ? GLYPH_BYTES[0]! : UPPER_HALF_BYTES
         }
         else {
           const g = glyphs[i]!
@@ -118,7 +192,7 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
           if (!g) colors.set(options.sky, 3)
           packed = (g * 0x1000000 + (g ? pack(colors, 0) : 0)) >>> 0
           cellBg = pack(colors, 3)
-          glyph = GLYPHS[g]!
+          glyph = GLYPH_BYTES[g]!
         }
         if (shownFg[i] === packed && shownBg[i] === cellBg) {
           inPlace = false
@@ -126,28 +200,30 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         }
         shownFg[i] = packed
         shownBg[i] = cellBg
+        w.reserve(MAX_CELL_BYTES)
         // +2: terminal rows count from 1, and the status bar takes the first.
-        if (!inPlace) parts.push(`${ESC}${y + 2};${x + 1}H`)
+        if (!inPlace) w.moveTo(y + 2, x + 1)
         inPlace = true
         if (cellBg !== bg) {
-          parts.push(color(48, cellBg))
+          w.color(48, cellBg, trueColor)
           bg = cellBg
         }
         const cellFg = packed & 0xFFFFFF
-        if (glyph !== ' ' && cellFg !== fg) {
-          parts.push(color(38, cellFg))
+        if (glyph !== GLYPH_BYTES[0] && cellFg !== fg) {
+          w.color(38, cellFg, trueColor)
           fg = cellFg
         }
-        parts.push(glyph)
+        w.bytes(glyph)
       }
     }
-    if (!parts.length) return { bytes: 0, writeMs: 0 }
-    // Synchronized output (2026): the terminal shows the frame once it has all of it, not half
-    // drawn. Then a status request (5n), answered once the terminal has read everything before it.
-    const text = `${ESC}?2026h${parts.join('')}${ESC}?2026l${ESC}5n`
+    if (w.length === empty) return { bytes: 0, writeMs: 0 }
+    // Then a status request (5n), answered once the terminal has read everything before it.
+    w.reserve(MAX_CELL_BYTES)
+    w.text(`${ESC}?2026l${ESC}5n`)
+    const frame = w.take()
     const start = performance.now()
-    out.write(text)
-    return { bytes: Buffer.byteLength(text), writeMs: performance.now() - start }
+    out.write(frame)
+    return { bytes: frame.length, writeMs: performance.now() - start }
   }
 
   /** Writes the status bar above the frame and the key bar below it, where they changed. */
