@@ -51,7 +51,7 @@ yarn ascii --help       # every option
 
 To publish a new version to npm, follow the versioning and release steps in `AGENTS.md`. The build bundles `cli/` and the code it uses from `app/` into two files with no dependencies.
 
-Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor. The status line says which one your terminal does. If input misbehaves, `--log-input FILE` records everything the terminal sends.
+Terminals that support the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, Alacritty) report when a key is let go, so holding `W` drives smoothly. Elsewhere a key counts as held while its key repeats keep coming, which adds a short pause after the first press, like holding a key in a text editor. The status line says which one your terminal does. If input misbehaves, `--log-input FILE` records everything the terminal sends. `--benchmark` flies the browser benchmark's camera path for 12 seconds, then prints the fps and how each frame's time splits between tracing, building escape codes, writing to the terminal and waiting.
 
 ## How the ASCII renderer works
 

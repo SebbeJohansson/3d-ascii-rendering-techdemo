@@ -1,8 +1,7 @@
 import type { Environment } from '~/environments'
-import { DEFAULT_VIEW, type CameraView } from '~/lib/camera'
+import { benchmarkView, DEFAULT_VIEW } from '~/lib/camera'
 import type { FramePerf } from '~/lib/frameMeter'
 import { hasWebGpu } from '~/lib/gpu/gpuTracer'
-import type { Vec3 } from '~/lib/math'
 
 export type ViewMode = '3d' | 'ascii' | 'split' | 'lens'
 type BenchmarkView = '3d' | 'ascii'
@@ -48,20 +47,6 @@ interface BenchmarkState {
 
 export function viewPath(envId: string, mode: ViewMode) {
   return mode === '3d' ? `/${envId}` : `/${envId}/${mode}`
-}
-
-/**
- * The benchmark's camera path, `u` from 0 to 1: one full circle around the environment's
- * starting view, zooming in towards the middle of the lap and back out.
- */
-function benchmarkView({ position: p, target: t }: CameraView, u: number): CameraView {
-  const ox = p[0] - t[0]
-  const oz = p[2] - t[2]
-  const radius = Math.hypot(ox, oz)
-  const angle = Math.atan2(ox, oz) + 2 * Math.PI * u
-  const zoom = 1 - 0.35 * Math.sin(Math.PI * u)
-  const position: Vec3 = [t[0] + radius * zoom * Math.sin(angle), t[1] + (p[1] - t[1]) * zoom, t[2] + radius * zoom * Math.cos(angle)]
-  return { position, target: [...t] }
 }
 
 /** Starting, stopping and reading the benchmark. Shared by every page. */

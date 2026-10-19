@@ -86,10 +86,10 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
     return edge ? pack(colors, 0) : pack(colors, 3)
   }
 
-  /** Draws a frame of the grid resize() returned. */
+  /** Draws a frame of the grid resize() returned. Returns the bytes written and how long writing took. */
   function draw(cells: Cells, options: ScreenOptions) {
     const grid = traced()
-    if (cells.ink.length !== grid.cols * grid.rows) return
+    if (cells.ink.length !== grid.cols * grid.rows) return { bytes: 0, writeMs: 0 }
     pickGlyphs(cells, grid.cols, grid.rows, options, glyphs, edgeStrength, edges)
     const blocks = resolution === 'blocks'
     const sky = (options.sky[0]! << 16) | (options.sky[1]! << 8) | options.sky[2]!
@@ -141,7 +141,11 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
         parts.push(glyph)
       }
     }
-    if (parts.length) out.write(parts.join(''))
+    if (!parts.length) return { bytes: 0, writeMs: 0 }
+    const text = parts.join('')
+    const start = performance.now()
+    out.write(text)
+    return { bytes: Buffer.byteLength(text), writeMs: performance.now() - start }
   }
 
   /** Writes the status bar above the frame and the key bar below it, where they changed. */

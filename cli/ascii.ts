@@ -6,7 +6,7 @@ import { appendFileSync, writeFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { parseArgs } from 'node:util'
 import { ENVIRONMENTS, findEnvironment, type Environment } from '../app/environments'
-import { CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
+import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
@@ -23,6 +23,9 @@ const CELL_ASPECT = 2
 const KEY_ORBIT_SPEED = 0.2
 const KEY_ZOOM_SPEED = 900
 const TICK_MS = 1000 / 60
+/** --benchmark: seconds along the browser benchmark's camera path, the first WARMUP not counted. */
+const BENCH_SECONDS = 12
+const BENCH_WARMUP = 2
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -39,6 +42,7 @@ const { values, positionals } = parseArgs({
     backgrounds: { type: 'boolean', default: true },
     blocks: { type: 'boolean', default: false },
     color: { type: 'boolean', default: true },
+    benchmark: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h' },
   },
 })
@@ -56,6 +60,7 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --no-backgrounds  characters only, no colored cells
   --blocks          twice the detail: half-cell color blocks instead of characters
   --no-color        dark characters on the sky color
+  --benchmark       fly a ${BENCH_SECONDS} s camera path, then print fps and where frame time went
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · WASD/arrows move or look · Q/E zoom (dragon: down/up)
@@ -85,7 +90,8 @@ const style = { outlines: values.outlines, cellBackground: values.backgrounds, c
 
 let timeOfDay = values.time ? (((Number(values.time) / 24) % 1) + 1) % 1 : NOON
 let cycling = values.cycle
-let seed = values.seed ? Number(values.seed) : Math.floor(Math.random() * 1e6)
+// The benchmark uses the same world every run, so runs compare.
+let seed = values.seed ? Number(values.seed) : values.benchmark ? 1 : Math.floor(Math.random() * 1e6)
 let world = env.generate(seed, size)
 let summary = world.summary
 let view: CameraView = structuredClone(env.camera ?? DEFAULT_VIEW)
@@ -124,9 +130,48 @@ function onFrame(frame: TracedFrame) {
   }
   showBars()
   const start = performance.now()
-  screen.draw(frame, style)
-  const drawMs = performance.now() - start
-  meter.frame(frame.traceMs + drawMs, { trace: frame.traceMs, draw: drawMs })
+  const { bytes, writeMs } = screen.draw(frame, style)
+  const end = performance.now()
+  meter.frame(frame.traceMs + end - start, { trace: frame.traceMs, draw: end - start })
+  if (values.benchmark) {
+    benchStart ??= end
+    benchFrames.push({ at: end, trace: frame.traceMs, build: end - start - writeMs, write: writeMs, bytes, drain: drainMs })
+    drainMs = 0
+  }
+}
+
+interface BenchFrame { at: number, trace: number, build: number, write: number, bytes: number, drain: number }
+/** When the first frame was drawn: the camera path starts there. */
+let benchStart: number | undefined
+const benchFrames: BenchFrame[] = []
+const benchFrom = structuredClone(view)
+/** Time the next frame was held back because the terminal hadn't taken the last one yet. */
+let drainMs = 0
+let drainSince: number | undefined
+
+/** Leaves the full screen and prints how fast the measured part of the run was. */
+function finishBenchmark() {
+  const measured = benchFrames.filter(f => f.at >= benchStart! + BENCH_WARMUP * 1000)
+  const seconds = BENCH_SECONDS - BENCH_WARMUP
+  const avg = (key: keyof BenchFrame) => measured.reduce((n, f) => n + f[key], 0) / Math.max(1, measured.length)
+  const fps = measured.length / seconds
+  // The slowest half second.
+  const windows = Array.from({ length: seconds * 2 }, (_, w) => measured.filter(f => Math.floor((f.at - benchStart! - BENCH_WARMUP * 1000) / 500) === w).length * 2)
+  const [trace, build, write, drain] = [avg('trace'), avg('build'), avg('write'), avg('drain')]
+  const frameMs = 1000 / Math.max(fps, 1e-9)
+  const ms = (n: number) => `${n.toFixed(1).padStart(6)} ms`
+  const lines = [
+    `${env.name} · seed ${seed} · ${grid.cols}×${grid.rows} ${resolution} · ${workerCount} threads · ${process.stdout.hasColors(2 ** 24) ? '24-bit' : '256'} color`,
+    '',
+    `  fps          ${fps.toFixed(1).padStart(6)}     (worst half second: ${Math.min(...windows)})`,
+    `  per frame    ${ms(frameMs)}`,
+    `    tracing    ${ms(trace)}`,
+    `    ANSI       ${ms(build)}  building the escape codes`,
+    `    terminal   ${ms(write)}  writing ${(avg('bytes') / 1024).toFixed(0)} KB (${((avg('bytes') * fps) / 1024 / 1024).toFixed(1)} MB/s)`,
+    `    backlog    ${ms(drain)}  waiting for the terminal to take the last frame`,
+    `    idle       ${ms(Math.max(0, frameMs - trace - build - write - drain))}  waiting for the next tick (at most ${Math.round(1000 / TICK_MS)} fps)`,
+  ]
+  quit(0, lines.join('\n'))
 }
 
 /** What's on screen and how fast, for the bar on top. */
@@ -222,6 +267,7 @@ const input = createInput(process.stdin, process.stdout, {
   onRaw: logInput,
   onKey(name) {
     if (name === 'escape' || name === 'ctrl+c') quit()
+    else if (values.benchmark) return
     else if (name === '1') spawn(null)
     else if (name === '2') spawn('dragon')
     else if (name === '3') spawn('car')
@@ -245,6 +291,7 @@ const input = createInput(process.stdin, process.stdout, {
 let drag: { x: number, y: number, pan: boolean } | undefined
 
 function onMouse(e: MouseEvent) {
+  if (values.benchmark) return
   if (e.kind === 'wheel') {
     if (pose) zoomChase(chase, e.delta * 100)
     else view = zoomView(view, e.delta * 100)
@@ -269,6 +316,14 @@ function onMouse(e: MouseEvent) {
 const axis = (plus: string[], minus: string[]) => Number(plus.some(input.isDown)) - Number(minus.some(input.isDown))
 
 function step(dt: number) {
+  if (values.benchmark) {
+    if (benchStart === undefined) return
+    const u = (performance.now() - benchStart) / 1000 / BENCH_SECONDS
+    if (u >= 1) return finishBenchmark()
+    view = benchmarkView(benchFrom, u)
+    dirty = true
+    return
+  }
   if (cycling) {
     timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1
     dirty = true
@@ -308,7 +363,11 @@ function tick() {
   step(dt)
   meter.tick()
   // One frame in flight at a time; a write still draining to the terminal also waits.
-  if (dirty && cols && !tracer.busy && process.stdout.writableNeedDrain === false) {
+  const ready = dirty && cols && !tracer.busy
+  if (ready && process.stdout.writableNeedDrain) drainSince ??= now
+  if (ready && process.stdout.writableNeedDrain === false) {
+    if (drainSince !== undefined) drainMs += now - drainSince
+    drainSince = undefined
     dirty = false
     tracer.render({ position: [...view.position], target: [...view.target], fov: CAMERA_FOV, aspect: cols / (rows * CELL_ASPECT) }, grid.cols, grid.rows, now / 1000, pose && { position: [...pose.position], heading: pose.heading }, timeOfDay)
   }
@@ -317,13 +376,14 @@ function tick() {
 
 let quitting = false
 
-function quit(code = 0) {
+function quit(code = 0, message?: string) {
   if (quitting) return
   quitting = true
   clearTimeout(timer)
   input.stop()
   screen.leave()
   tracer.dispose()
+  if (message) console.log(message)
   process.exit(code)
 }
 
@@ -341,5 +401,5 @@ screen.enter()
 input.start()
 layout()
 tracer.setScene(env.id, seed, size)
-if (values.player === 'dragon' || values.player === 'car') spawn(values.player)
+if (!values.benchmark && (values.player === 'dragon' || values.player === 'car')) spawn(values.player)
 tick()
