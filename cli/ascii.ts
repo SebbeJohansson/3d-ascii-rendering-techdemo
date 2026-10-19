@@ -188,8 +188,8 @@ function statusBar(loading?: string) {
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
   const moves = !playerKind
-    ? 'orbit: WASD look · Q/E zoom'
-    : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''}`
+    ? 'orbit: WASD look · Q/E zoom · click names it'
+    : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
   return ` ${moves} │ 1 orbit · 2 dragon · 3 car · Tab scene · R ${resolution === 'blocks' ? 'characters' : 'blocks'} · T cycle · ,. hour · N new · Esc quit`
 }
 

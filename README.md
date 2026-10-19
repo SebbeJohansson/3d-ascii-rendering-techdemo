@@ -33,6 +33,10 @@ The **Time** slider in the panel moves the sun across the sky, and **Day and nig
 
 In the ocean the ground is a sea that reaches the horizon and mirrors the islands and the sky. The ray tracer sends a second ray up from the water where a cell's ray hits it; the 3D view renders the scene again from below the water with three's `reflector()`. Both blend the mirror image in the same way: a little looking straight down, almost all of it at grazing angles. Players stand on the islands' land.
 
+### Click to inspect
+
+Click anything to see what it is and how far away: a building and its floors, a pine and its height, the sea, the dragon. It works in every view, the terminal included, where the name shows in the top bar. The ray tracer casts one ray through the click; the 3D view builds the ray tracer's copy of the scene on the first click to do the same.
+
 ### Riding a dragon or a car
 
 The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom; once it moves and the mouse is left alone for 1.5 seconds, the camera eases back behind it. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
@@ -47,7 +51,7 @@ yarn ascii forest --seed 42
 yarn ascii --help       # every option
 ```
 
-`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+`1` orbits, `2` rides the dragon and `3` the car. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser and a click names what is under it, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
 
 To publish a new version to npm, follow the versioning and release steps in `AGENTS.md`. The build bundles `cli/` and the code it uses from `app/` into two files with no dependencies.
 

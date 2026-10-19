@@ -60,10 +60,10 @@ function randomize() {
       <template v-if="getPlayer(playerKind).flies">
         · <kbd>Space</kbd> up · <kbd>Shift</kbd> down
       </template>
-      · drag to look · scroll to zoom
+      · drag to look · scroll to zoom · click to name what's there
     </p>
     <p v-else class="keys">
-      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · click to name what's there
     </p>
     <label>
       Seed
