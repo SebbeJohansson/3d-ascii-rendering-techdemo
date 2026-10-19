@@ -1,4 +1,5 @@
 import { mulberry32, pick } from '../lib/random'
+import { FLOOR_HEIGHT } from '../lib/windows'
 import type { Environment, Primitive } from './types'
 
 const BLOCK_SIZE = 24
@@ -12,6 +13,7 @@ export const city: Environment = {
   name: 'City',
   sky: 0xbfd4e6,
   ground: 0x3a3d42, // asphalt
+  groundLabel: 'Street',
   fogNear: 400,
   fogFar: 1400,
   size: { min: 2, max: 30, default: 12, label: n => `${n} × ${n} blocks` },
@@ -46,6 +48,7 @@ export const city: Environment = {
           depth: BLOCK_SIZE,
           height: SIDEWALK_HEIGHT,
           color: SIDEWALK_COLOR,
+          label: 'Sidewalk',
         })
 
         // Some blocks become parks: no buildings.
@@ -80,6 +83,7 @@ export const city: Environment = {
               roughness: 0.8,
               metalness: 0.1,
               windows: true,
+              label: `Building · ${Math.max(1, Math.round(height / FLOOR_HEIGHT))} floors`,
             })
             buildings++
           }

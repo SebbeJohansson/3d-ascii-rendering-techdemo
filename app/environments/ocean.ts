@@ -171,7 +171,7 @@ export const ocean: Environment = {
 
     return {
       primitives,
-      meshes: [{ ...mesh, roughness: 1 }],
+      meshes: [{ ...mesh, roughness: 1, label: 'Island' }],
       extent,
       summary: `${islands.length} islands · ${palms} palms`,
       groundHeight: (x, z) => Math.max(0, height(x, z)),
@@ -185,15 +185,16 @@ function addPalm(out: Primitive[], rand: () => number, x: number, y: number, z: 
   const span = height * between(rand, 0.6, 0.75)
   const color = pick(rand, PALM_LEAVES)
   const top = y + height
-  out.push({ shape: 'cylinder', x, y: y - 0.5, z, width: 0.8, depth: 0.8, height: height + 0.5, color: PALM_TRUNK })
-  out.push({ shape: 'sphere', x, y: top - 1.2, z, width: span, depth: span * 0.3, height: 1.6, color })
-  out.push({ shape: 'sphere', x, y: top - 1.2, z, width: span * 0.3, depth: span, height: 1.6, color })
-  out.push({ shape: 'sphere', x, y: top - 0.6, z, width: 1.8, depth: 1.8, height: 1.4, color: PALM_TRUNK })
+  const label = `Palm · ${Math.round(height)} m`
+  out.push({ shape: 'cylinder', x, y: y - 0.5, z, width: 0.8, depth: 0.8, height: height + 0.5, color: PALM_TRUNK, label })
+  out.push({ shape: 'sphere', x, y: top - 1.2, z, width: span, depth: span * 0.3, height: 1.6, color, label })
+  out.push({ shape: 'sphere', x, y: top - 1.2, z, width: span * 0.3, depth: span, height: 1.6, color, label })
+  out.push({ shape: 'sphere', x, y: top - 0.6, z, width: 1.8, depth: 1.8, height: 1.4, color: PALM_TRUNK, label })
 }
 
 function addBush(out: Primitive[], rand: () => number, x: number, y: number, z: number) {
   const width = between(rand, 3, 7)
-  out.push({ shape: 'sphere', x, y: y - width * 0.2, z, width, depth: width, height: width * 0.7, color: pick(rand, BUSH_COLORS) })
+  out.push({ shape: 'sphere', x, y: y - width * 0.2, z, width, depth: width, height: width * 0.7, color: pick(rand, BUSH_COLORS), label: 'Bush' })
 }
 
 /** A flattened boulder, sunk slightly into the sand. */
@@ -208,5 +209,6 @@ function addRock(out: Primitive[], rand: () => number, x: number, y: number, z: 
     depth: width * between(rand, 0.7, 1.2),
     height: width * between(rand, 0.4, 0.7),
     color: pick(rand, ROCK_COLORS),
+    label: 'Rock',
   })
 }

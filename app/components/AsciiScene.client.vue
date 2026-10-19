@@ -11,7 +11,7 @@ import { createGpuTracer, type GpuGlyphs, type GpuTracer } from '~/lib/gpu/gpuTr
 import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
-import { createMainThreadTracer, createWorkerTracer, upscaleFrame, type TracedFrame, type Tracer } from '~/lib/tracers'
+import { createMainThreadTracer, createWorkerTracer, upscaleFrame, type Picked, type TracedFrame, type Tracer } from '~/lib/tracers'
 
 const props = defineProps<{
   env: Environment
@@ -126,6 +126,7 @@ function startTracer() {
 }
 
 function rebuild() {
+  inspected.value = undefined
   tracer!.setScene(props.env.id, props.seed, props.size)
   dirty = true
 }
@@ -232,8 +233,13 @@ function gpuGlyphs(): GpuGlyphs | null {
 }
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
-// player, any drag orbits and the wheel zooms, both through its chase camera.
-let drag: { x: number, y: number, pan: boolean } | undefined
+// player, any drag orbits and the wheel zooms, both through its chase camera. A left click
+// that barely moves names what is under the pointer.
+let drag: { x: number, y: number, pan: boolean, startX: number, startY: number } | undefined
+/** A press that moves less than this many pixels is a click, not a drag. */
+const CLICK_SLOP = 4
+/** What the last click landed on, shown beside where it landed until the next press. */
+const inspected = ref<Picked & { x: number, y: number }>()
 
 function setView(next: CameraView) {
   view.value = next
@@ -242,8 +248,9 @@ function setView(next: CameraView) {
 
 function onPointerDown(e: PointerEvent) {
   canvas.value!.setPointerCapture(e.pointerId)
-  drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }
+  drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, startX: e.clientX, startY: e.clientY }
   moving = true
+  inspected.value = undefined
 }
 
 /** The camera came to rest: trace again at full resolution if the last frame was coarse. */
@@ -262,13 +269,25 @@ function onPointerMove(e: PointerEvent) {
   else setView(drag.pan ? panView(view.value, dx, dy, height) : orbitView(view.value, dx, dy, height))
 }
 
-function onPointerUp() {
+function onPointerUp(e: PointerEvent) {
+  if (drag && !drag.pan && e.type === 'pointerup' && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < CLICK_SLOP) void inspect(e)
   drag = undefined
   stopMoving()
 }
 
+/** Casts a ray through the clicked point, with the camera of the frame on screen. */
+async function inspect(e: PointerEvent) {
+  if (!tracer || !canvas.value) return
+  const rect = canvas.value.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  const picked = await tracer.pick(lastCamera ?? camera(), x / rect.width, y / rect.height)
+  inspected.value = picked ? { ...picked, x, y } : undefined
+}
+
 function onWheel(e: WheelEvent) {
   e.preventDefault()
+  inspected.value = undefined
   // A wheel has no "up" event: count it as moving until it has been still for a moment.
   moving = true
   clearTimeout(wheelTimer)
@@ -327,6 +346,15 @@ onBeforeUnmount(() => {
     />
     <canvas v-if="!pixels" ref="glCanvas" class="glyphs" />
     <canvas v-if="!pixels" ref="gpuCanvas" class="glyphs" />
+    <div
+      v-if="inspected"
+      class="inspect"
+      :class="{ left: inspected.x > width / 2 }"
+      :style="{ left: `${inspected.x}px`, top: `${inspected.y}px` }"
+    >
+      <strong>{{ inspected.label }}</strong>
+      <span>{{ Math.round(inspected.distance) }} m away</span>
+    </div>
   </div>
 </template>
 
@@ -353,5 +381,31 @@ canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
+}
+
+.inspect {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  transform: translate(12px, 12px);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.9);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  color: #333;
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Right half: open toward the left, so it stays on screen. */
+.inspect.left {
+  transform: translate(calc(-100% - 12px), 12px);
+}
+
+.inspect span {
+  font-size: 12px;
+  color: #666;
 }
 </style>

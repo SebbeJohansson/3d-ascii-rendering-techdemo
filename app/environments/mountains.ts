@@ -143,6 +143,7 @@ export const mountains: Environment = {
   name: 'Mountains',
   sky: 0xc6dceb,
   ground: GRASS[0]!,
+  groundLabel: 'Valley floor',
   fogNear: 800,
   fogFar: 2400,
   camera: { position: [560, 330, 560], target: [0, 20, 0] },
@@ -178,7 +179,7 @@ export const mountains: Environment = {
 
     return {
       primitives,
-      meshes: [{ ...mesh, roughness: 1 }],
+      meshes: [{ ...mesh, roughness: 1, label: 'Mountainside' }],
       extent,
       summary: `${Math.round(peak)} m peak · ${trees} trees`,
       groundHeight: land.at,
@@ -191,12 +192,13 @@ function addPine(out: Primitive[], rand: () => number, x: number, y: number, z: 
   const height = between(rand, 12, 24) * scale
   const width = height * between(rand, 0.35, 0.45)
   const color = pick(rand, PINE_COLORS)
+  const label = `Pine · ${Math.round(height)} m`
   // Sunk a little, so the downhill side doesn't float.
   const base = y - 1
-  out.push({ shape: 'cylinder', x, y: base, z, width: height * 0.06, depth: height * 0.06, height: height * 0.3 + 1, color: pick(rand, TRUNK_COLORS) })
+  out.push({ shape: 'cylinder', x, y: base, z, width: height * 0.06, depth: height * 0.06, height: height * 0.3 + 1, color: pick(rand, TRUNK_COLORS), label })
   for (let tier = 0; tier < 3; tier++) {
     const w = width * (1 - tier * 0.25)
-    out.push({ shape: 'cone', x, y: base + 1 + height * (0.18 + tier * 0.22), z, width: w, depth: w, height: height * 0.42, color })
+    out.push({ shape: 'cone', x, y: base + 1 + height * (0.18 + tier * 0.22), z, width: w, depth: w, height: height * 0.42, color, label })
   }
 }
 
@@ -212,5 +214,6 @@ function addRock(out: Primitive[], rand: () => number, x: number, y: number, z: 
     depth: width * between(rand, 0.7, 1.2),
     height: width * between(rand, 0.4, 0.7),
     color: pick(rand, ROCK_COLORS),
+    label: 'Boulder',
   })
 }

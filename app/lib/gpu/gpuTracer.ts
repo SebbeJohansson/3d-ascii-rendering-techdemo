@@ -18,7 +18,7 @@ import type { Bvh } from '../bvh'
 import { linearToSrgbByte } from '../color'
 import { cameraBasis } from '../math'
 import { buildRaycastScene, type RaycastPlayer, type RaycastScene } from '../raycaster'
-import { createPlayerSlot, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
+import { createPlayerSlot, pickScene, poseScene, type TracedFrame, type Tracer, type TracerEvents } from '../tracers'
 import { GLYPH_FLAGS, GLYPH_WORKGROUP, GLYPHS_WGSL } from './glyphs.wgsl'
 import { PRESENT_WGSL } from './present.wgsl'
 import { RAYTRACE_WGSL } from './raytrace.wgsl'
@@ -460,6 +460,9 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     },
     setScene,
     setPlayer: player.set,
+    async pick(camera, u, v) {
+      return scene && generated ? pickScene(currentEnv, generated, scene, player.name, camera, u, v) : null
+    },
     setGlyphs(next) {
       glyphs = next
     },

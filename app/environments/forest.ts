@@ -13,6 +13,7 @@ export const forest: Environment = {
   name: 'Forest',
   sky: 0xcbdbe0,
   ground: 0x5b7a3c, // grass
+  groundLabel: 'Grass',
   // Denser fog than the city: the trees fade into a haze.
   fogNear: 200,
   fogFar: 1100,
@@ -55,8 +56,8 @@ export const forest: Environment = {
   },
 }
 
-function trunk(rand: () => number, x: number, z: number, width: number, height: number): Primitive {
-  return { shape: 'cylinder', x, y: 0, z, width, depth: width, height, color: pick(rand, TRUNK_COLORS) }
+function trunk(rand: () => number, x: number, z: number, width: number, height: number, label: string): Primitive {
+  return { shape: 'cylinder', x, y: 0, z, width, depth: width, height, color: pick(rand, TRUNK_COLORS), label }
 }
 
 /** A trunk with three stacked cones, each narrower than the one below. */
@@ -64,10 +65,11 @@ function addPine(out: Primitive[], rand: () => number, x: number, z: number) {
   const height = between(rand, 14, 30)
   const width = height * between(rand, 0.35, 0.45)
   const color = pick(rand, PINE_COLORS)
-  out.push(trunk(rand, x, z, height * 0.06, height * 0.3))
+  const label = `Pine · ${Math.round(height)} m`
+  out.push(trunk(rand, x, z, height * 0.06, height * 0.3, label))
   for (let tier = 0; tier < 3; tier++) {
     const w = width * (1 - tier * 0.25)
-    out.push({ shape: 'cone', x, y: height * (0.18 + tier * 0.22), z, width: w, depth: w, height: height * 0.42, color })
+    out.push({ shape: 'cone', x, y: height * (0.18 + tier * 0.22), z, width: w, depth: w, height: height * 0.42, color, label })
   }
 }
 
@@ -76,8 +78,9 @@ function addLeafyTree(out: Primitive[], rand: () => number, x: number, z: number
   const height = between(rand, 10, 20)
   const crown = height * between(rand, 0.6, 0.8)
   const color = pick(rand, LEAF_COLORS)
-  out.push(trunk(rand, x, z, height * 0.1, height * 0.55))
-  out.push({ shape: 'sphere', x, y: height - crown, z, width: crown, depth: crown, height: crown * 0.9, color })
+  const label = `Leafy tree · ${Math.round(height)} m`
+  out.push(trunk(rand, x, z, height * 0.1, height * 0.55, label))
+  out.push({ shape: 'sphere', x, y: height - crown, z, width: crown, depth: crown, height: crown * 0.9, color, label })
   if (rand() < 0.5) {
     const small = crown * 0.6
     out.push({
@@ -89,6 +92,7 @@ function addLeafyTree(out: Primitive[], rand: () => number, x: number, z: number
       depth: small,
       height: small * 0.9,
       color,
+      label,
     })
   }
 }
@@ -105,5 +109,6 @@ function addRock(out: Primitive[], rand: () => number, x: number, z: number) {
     depth: width * between(rand, 0.7, 1.2),
     height: width * between(rand, 0.4, 0.7),
     color: pick(rand, ROCK_COLORS),
+    label: 'Boulder',
   })
 }

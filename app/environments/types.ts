@@ -24,6 +24,8 @@ export interface Primitive {
   metalness?: number
   /** Gets rows of windows that light up at night (see lib/windows.ts). */
   windows?: boolean
+  /** What it is, shown when it is clicked: e.g. "Pine · 22 m". Parts of one thing share it. */
+  label?: string
 }
 
 /**
@@ -42,6 +44,8 @@ export interface Mesh {
   roughness?: number
   /** Defaults to 0. */
   metalness?: number
+  /** What it is, shown when it is clicked. */
+  label?: string
 }
 
 export interface EnvironmentScene {
@@ -69,6 +73,8 @@ export interface Environment {
    * rises toward a full mirror (Fresnel).
    */
   reflectance?: number
+  /** What the ground is, shown when it is clicked. Defaults to "Sea" with reflectance, else "Ground". */
+  groundLabel?: string
   fogNear: number
   fogFar: number
   /** Where the camera starts. Defaults to an overview from above. */

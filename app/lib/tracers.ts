@@ -8,7 +8,7 @@ import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
 import type { EnvironmentScene } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
-import { buildRaycastPlayer, buildRaycastScene, placePlayer, renderScene, setLighting, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { buildRaycastPlayer, buildRaycastScene, castRay, placePlayer, renderScene, setLighting, updateMeshes, type Camera, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -25,6 +25,14 @@ export interface TracedFrame {
   stages?: Record<string, number>
   /** Already drawn onto the canvas by the GPU: the cell arrays are empty. */
   presented?: boolean
+}
+
+/** What a click landed on. */
+export interface Picked {
+  /** e.g. "Building · 12 floors". */
+  label: string
+  /** From the camera, in world units (meters). */
+  distance: number
 }
 
 export interface TracerEvents {
@@ -46,6 +54,11 @@ export interface Tracer {
    * `timeOfDay` (see lighting.ts) sets the light; `occlusion` turns on ambient occlusion.
    */
   render: (camera: Camera, cols: number, rows: number, time: number, player?: PlayerPose, timeOfDay?: number, occlusion?: boolean) => void
+  /**
+   * What the ray through (u, v) of the camera's view hits (both 0..1 from the top left), in
+   * the scene as the last frame posed it. Null for sky.
+   */
+  pick: (camera: Camera, u: number, v: number) => Promise<Picked | null>
   dispose: () => void
 }
 
@@ -61,17 +74,49 @@ export function poseScene(envId: string, generated: EnvironmentScene, scene: Ray
   updateMeshes(scene, generated)
 }
 
+/**
+ * Casts the ray through (u, v) of the camera's view and names what it hits. `scene` is the
+ * ray tracer's copy of `generated`; `player` is the spawned player's name, if any.
+ */
+export function pickScene(envId: string, generated: EnvironmentScene, scene: RaycastScene, player: string | undefined, camera: Camera, u: number, v: number): Picked | null {
+  const hit = castRay(scene, camera, u, v)
+  if (!hit) return null
+  const env = getEnvironment(envId)
+  let label: string | undefined
+  if (hit.kind === 'ground') label = env.groundLabel ?? (env.reflectance ? 'Sea' : 'Ground')
+  else if (hit.kind === 'player') label = player
+  else if (hit.kind === 'primitive') label = generated.primitives[hit.index]?.label
+  else if (hit.kind === 'mesh') {
+    // The meshes were merged in order: find the one this triangle came from.
+    let first = 0
+    for (const mesh of generated.meshes ?? []) {
+      first += mesh.indices.length / 3
+      if (hit.triangle < first) {
+        label = mesh.label
+        break
+      }
+    }
+  }
+  return { label: label ?? 'Something', distance: hit.distance }
+}
+
 /** The ray tracer's copy of the spawned player, kept apart from the environment's scene. */
 export function createPlayerSlot() {
   let model: PlayerModel | undefined
   let raycast: RaycastPlayer | undefined
+  let name: string | undefined
   return {
+    /** The spawned player's name, e.g. "Car". */
+    get name() {
+      return name
+    },
     set(kind: PlayerKind | null, seed: number) {
       if (!kind) {
-        model = raycast = undefined
+        model = raycast = name = undefined
         return
       }
       const player = getPlayer(kind)
+      name = player.name
       model = player.build(seed)
       raycast = buildRaycastPlayer(model.mesh, player.scale)
     },
@@ -142,6 +187,9 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
       frame.traceMs = performance.now() - start
       onFrame(frame)
     },
+    async pick(camera, u, v) {
+      return scene && generated ? pickScene(currentEnv, generated, scene, player.name, camera, u, v) : null
+    },
     dispose() {},
   }
 }
@@ -169,6 +217,8 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
   let pending = 0
   let frameStart = 0
   let frame: TracedFrame | undefined
+  /** Picks asked of the first worker, answered in order. */
+  const picks: ((picked: Picked | null) => void)[] = []
 
   const workers = Array.from({ length: count }, () => {
     const worker = spawn()
@@ -184,6 +234,10 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     if (msg.type === 'scene') {
       // Every worker replies; they all built the same scene, so report it once.
       if (worker === workers[0]) onScene(msg.summary)
+      return
+    }
+    if (msg.type === 'pick') {
+      picks.shift()?.(msg.picked)
       return
     }
     if (!frame) return
@@ -226,10 +280,18 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
         post(w, { type: 'render', camera, time, timeOfDay, occlusion, player, cols, rows, rowStart: k, rowStep: count, ink, rgb, depths, normals }, [ink.buffer, rgb.buffer, depths.buffer, normals.buffer])
       })
     },
+    pick(camera, u, v) {
+      // Every worker holds the whole scene: one is enough.
+      return new Promise((resolve) => {
+        picks.push(resolve)
+        post(workers[0]!, { type: 'pick', camera, u, v })
+      })
+    },
     dispose() {
       for (const w of workers) w.terminate()
       pending = 0
       frame = undefined
+      for (const resolve of picks.splice(0)) resolve(null)
     },
   }
 }

@@ -4,17 +4,20 @@
 import { getEnvironment } from '../environments'
 import type { EnvironmentScene } from '../environments/types'
 import { buildRaycastScene, renderScene, type Camera, type RaycastScene } from '../lib/raycaster'
-import { createPlayerSlot, poseScene } from '../lib/tracers'
+import { createPlayerSlot, pickScene, poseScene, type Picked } from '../lib/tracers'
 import type { PlayerKind, PlayerPose } from '../players'
 
 export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
   | { type: 'player', kind: PlayerKind | null, seed: number }
+  /** What the ray through (u, v) of the view hits, in the scene as the last frame posed it. */
+  | { type: 'pick', camera: Camera, u: number, v: number }
   /** Traces rows rowStart, rowStart + rowStep, ... into tightly packed ink/rgb. */
   | { type: 'render', camera: Camera, time: number, timeOfDay: number, occlusion: boolean, player?: PlayerPose, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 export type WorkerResponse =
   | { type: 'scene', summary: string }
+  | { type: 'pick', picked: Picked | null }
   | { type: 'frame', rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 let scene: RaycastScene | undefined
@@ -37,6 +40,9 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   }
   else if (msg.type === 'player') {
     player.set(msg.kind, msg.seed)
+  }
+  else if (msg.type === 'pick') {
+    reply({ type: 'pick', picked: scene && generated ? pickScene(envId, generated, scene, player.name, msg.camera, msg.u, msg.v) : null })
   }
   else if (scene && generated) {
     const { camera, time, timeOfDay, occlusion, player: pose, cols, rows, rowStart, rowStep, ink, rgb, depths, normals } = msg

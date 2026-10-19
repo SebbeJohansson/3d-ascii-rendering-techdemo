@@ -843,3 +843,29 @@ export function renderScene(
     }
   }
 }
+
+/** What a single ray hit: a primitive or mesh triangle by index, the ground, or the player. */
+export type RayHit =
+  | { kind: 'primitive', index: number, distance: number }
+  | { kind: 'mesh', triangle: number, distance: number }
+  | { kind: 'ground' | 'player', distance: number }
+
+/**
+ * Traces the one ray through (u, v) of the camera's view, both 0..1 from the top left, the
+ * way renderScene() traces a cell's center. Undefined if it hits nothing.
+ */
+export function castRay(s: RaycastScene, cam: Camera, u: number, v: number): RayHit | undefined {
+  const { forward: f, right: r, up: up } = cameraBasis(cam.position, cam.target)
+  const tanHalf = Math.tan((cam.fov * Math.PI) / 360)
+  const sx = (u * 2 - 1) * tanHalf * cam.aspect
+  const sy = (1 - v * 2) * tanHalf
+  const d = [0, 1, 2].map(k => f[k]! + r[k]! * sx + up[k]! * sy)
+  const len = Math.hypot(d[0]!, d[1]!, d[2]!)
+  const [ox, oy, oz] = cam.position
+  if (!trace(s, ox, oy, oz, d[0]! / len, d[1]! / len, d[2]! / len, false, Infinity)) return undefined
+  const { t: distance, prim } = hit
+  if (prim === GROUND) return { kind: 'ground', distance }
+  if (prim === PLAYER) return { kind: 'player', distance }
+  if (prim === MESH) return { kind: 'mesh', triangle: hit.triangle, distance }
+  return { kind: 'primitive', index: prim, distance }
+}
