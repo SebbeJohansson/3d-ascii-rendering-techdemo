@@ -901,13 +901,20 @@ function hitNormal(s: RaycastScene): Vec3 {
 }
 
 /**
- * Height of the first surface straight below (x, y, z), leaving out the player: where
- * something dropped there lands. 0 (the ground's height) if nothing is below.
+ * Height of the first surface straight below (x, y, z), leaving out the player and the
+ * primitives `skip` says yes to. 0 (the ground's height) if nothing is below.
  */
-export function landingHeight(s: RaycastScene, x: number, y: number, z: number) {
+export function heightBelow(s: RaycastScene, x: number, y: number, z: number, skip: (primitive: number) => boolean) {
   const player = s.player
   s.player = undefined
-  const landed = trace(s, x, y, z, 0, -1, 0, false, Infinity)
+  let height = 0
+  while (trace(s, x, y, z, 0, -1, 0, false, Infinity)) {
+    height = y - hit.t
+    if (hit.prim < 0 || !skip(hit.prim)) break
+    // Carry on from just under the skipped primitive.
+    y = s.bounds[hit.prim * 6 + 1]! - EPS
+    height = 0
+  }
   s.player = player
-  return landed ? y - hit.t : 0
+  return height
 }

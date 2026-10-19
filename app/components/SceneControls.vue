@@ -16,7 +16,9 @@ const props = defineProps<{
 const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
 const boxMode = useBoxMode()
-const { boxes, clear: clearBoxes } = useBoxes(props.env)
+const { boxes, fall, clear: clearBoxes } = useBoxes(props.env)
+const gravity = useBoxGravity()
+watch(gravity, on => on && fall())
 
 /** Orbit, the boxes mode (orbit where a click drops a box) or a player: one at a time. */
 function play(kind: PlayerKind | null, boxes = false) {
@@ -76,9 +78,15 @@ function randomize() {
     <p v-else class="keys">
       drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ boxMode ? 'click to drop a box onto what\'s there' : 'click to name what\'s there' }}
     </p>
-    <button v-if="boxMode && boxes.length" type="button" class="link" @click="clearBoxes">
-      Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
-    </button>
+    <template v-if="boxMode">
+      <label class="toggle">
+        <input v-model="gravity" type="checkbox">
+        Gravity
+      </label>
+      <button v-if="boxes.length" type="button" class="link" @click="clearBoxes">
+        Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
+      </button>
+    </template>
     <label>
       Seed
       <input v-model.number="seed" type="number">

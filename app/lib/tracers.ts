@@ -9,7 +9,7 @@ import type { Environment, EnvironmentScene, Primitive } from '../environments/t
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
 import { withBoxes, type DropSpot } from './boxes'
-import { buildRaycastPlayer, buildRaycastScene, castRay, landingHeight, placePlayer, renderScene, setLighting, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -101,9 +101,10 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
       }
     }
   }
-  // Nudged off the surface, so a wall's spot lands on what is beside it, not on its own top.
+  // Nudged off the surface, so a wall's spot finds the floor beside it, not its own top.
   const [x, y, z] = hit.point.map((v, k) => v + hit.normal[k]! * 0.05)
-  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, landing: landingHeight(scene, x!, y!, z!) }
+  const floor = heightBelow(scene, x!, y!, z!, i => !!generated.primitives[i]?.dropped)
+  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor }
 }
 
 /**

@@ -101,6 +101,12 @@ function createInstances(group: Primitive[], night: THREE.UniformNode<'float', n
   const mesh = new THREE.InstancedMesh(UNIT_GEOMETRY[shape](), material, group.length)
   mesh.castShadow = true
   mesh.receiveShadow = true
+  placeInstances(mesh, group)
+  return mesh
+}
+
+/** Moves, sizes and colors each instance as its primitive. */
+function placeInstances(mesh: THREE.InstancedMesh, group: Primitive[]) {
   const m = new THREE.Matrix4()
   const color = new THREE.Color()
   group.forEach((p, i) => {
@@ -108,7 +114,10 @@ function createInstances(group: Primitive[], night: THREE.UniformNode<'float', n
     mesh.setMatrixAt(i, m)
     mesh.setColorAt(i, color.setHex(p.color))
   })
-  return mesh
+  mesh.instanceMatrix.needsUpdate = true
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  // Three culls with bounds it worked out once; falling boxes move out of them.
+  mesh.computeBoundingSphere()
 }
 
 /** Builds the three scene graph for an environment. Rendering is left to the caller. */
@@ -197,6 +206,11 @@ export function createEnvironmentScene() {
   function setBoxes(next: Primitive[]) {
     boxes = next
     withDropped = undefined
+    // Same boxes, moved (falling): no new mesh needed.
+    if (boxMesh && boxMesh.count === boxes.length) {
+      placeInstances(boxMesh, boxes)
+      return shown()?.summary
+    }
     if (boxMesh) {
       scene.remove(boxMesh)
       disposeMesh(boxMesh)

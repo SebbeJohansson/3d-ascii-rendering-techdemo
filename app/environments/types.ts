@@ -26,6 +26,8 @@ export interface Primitive {
   windows?: boolean
   /** What it is, shown when it is clicked: e.g. "Pine · 22 m". Parts of one thing share it. */
   label?: string
+  /** A box dropped in by a click (see lib/boxes.ts), not part of the environment. */
+  dropped?: boolean
 }
 
 /**
