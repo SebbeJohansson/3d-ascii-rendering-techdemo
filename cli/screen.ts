@@ -33,6 +33,11 @@ function cube(r: number, g: number, b: number) {
 
 const pack = (c: Uint8Array, o: number) => (c[o]! << 16) | (c[o + 1]! << 8) | c[o + 2]!
 
+/** Colors this close (per channel, out of 255) look the same: not worth the bytes to change. */
+const NEAR = 3
+const near = (a: number, b: number) =>
+  Math.abs((a >>> 16) - (b >>> 16)) <= NEAR && Math.abs(((a >>> 8) & 255) - ((b >>> 8) & 255)) <= NEAR && Math.abs((a & 255) - (b & 255)) <= NEAR
+
 /** Decimal digits of 0..999 as bytes: numbers in escape codes are written with one lookup. */
 const DIGITS = Array.from({ length: 1000 }, (_, n) => Buffer.from(String(n)))
 const GLYPH_BYTES = [...GLYPHS].map(g => Buffer.from(g))
@@ -194,11 +199,19 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
           cellBg = pack(colors, 3)
           glyph = GLYPH_BYTES[g]!
         }
-        if (shownFg[i] === packed && shownBg[i] === cellBg) {
+        const glyphBits = (packed & BLOCK) >>> 0
+        let cellFg = packed & 0xFFFFFF
+        // On screen already, give or take a shade. The shown colors are what was actually
+        // written, so skipped changes never add up to more than NEAR.
+        const shown = shownFg[i]!
+        if (shownBg[i] !== UNKNOWN && (shown & BLOCK) >>> 0 === glyphBits && near(shown & 0xFFFFFF, cellFg) && near(shownBg[i]!, cellBg)) {
           inPlace = false
           continue
         }
-        shownFg[i] = packed
+        // A color close to the one already set saves an escape code.
+        if (bg >= 0 && near(cellBg, bg)) cellBg = bg
+        if (fg >= 0 && near(cellFg, fg)) cellFg = fg
+        shownFg[i] = (glyphBits | cellFg) >>> 0
         shownBg[i] = cellBg
         w.reserve(MAX_CELL_BYTES)
         // +2: terminal rows count from 1, and the status bar takes the first.
@@ -208,7 +221,6 @@ export function createScreen(out: NodeJS.WriteStream, trueColor: boolean) {
           w.color(48, cellBg, trueColor)
           bg = cellBg
         }
-        const cellFg = packed & 0xFFFFFF
         if (glyph !== GLYPH_BYTES[0] && cellFg !== fg) {
           w.color(38, cellFg, trueColor)
           fg = cellFg
