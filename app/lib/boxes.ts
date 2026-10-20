@@ -6,6 +6,8 @@
  */
 import type { EnvironmentScene, Primitive } from '../environments/types'
 import type { Vec3 } from './math'
+import type { Camera } from './raycaster'
+import { projectPoint } from './camera'
 import { between, pick } from './random'
 
 const COLORS = [0xe74c3c, 0xf39c12, 0xf1c40f, 0x2ecc71, 0x1abc9c, 0x3498db, 0x9b59b6, 0xecf0f1]
@@ -140,6 +142,23 @@ export function removeBox(boxes: readonly DroppedBox[], i: number): DroppedBox[]
     if (b.on > i) return { ...b, on: b.on - 1 }
     return { ...b, stuck: undefined, on: undefined }
   })
+}
+
+/** Corner pairs of a box's 12 edges, corners numbered by their bits: x, y, z. */
+const EDGES = [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]] as const
+
+/**
+ * The edges of a box as seen by `camera`, as an SVG path in a `width` × `height` view.
+ * Edges reaching behind the camera are left out.
+ */
+export function boxOutline({ x, y, z, width: w, depth: d, height: h }: Primitive, camera: Camera, width: number, height: number) {
+  const corners = Array.from({ length: 8 }, (_, i) => projectPoint(camera, [x + ((i & 1) - 0.5) * w, y + ((i >> 1) & 1) * h, z + ((i >> 2) - 0.5) * d]))
+  const px = (uv: [number, number]) => `${(uv[0] * width).toFixed(1)} ${(uv[1] * height).toFixed(1)}`
+  return EDGES.map(([a, b]) => {
+    const from = corners[a]
+    const to = corners[b]
+    return from && to ? `M${px(from)}L${px(to)}` : ''
+  }).join('')
 }
 
 /** The generated scene with dropped boxes added, and counted in its summary. */

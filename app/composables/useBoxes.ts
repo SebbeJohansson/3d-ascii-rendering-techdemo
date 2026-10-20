@@ -1,5 +1,6 @@
 import type { Environment, Primitive } from '~/environments'
 import { dropBox, fallBoxes, removeBox, type DroppedBox, type DropSpot } from '~/lib/boxes'
+import { mulberry32 } from '~/lib/random'
 
 const NONE: DroppedBox[] = []
 
@@ -21,6 +22,8 @@ export function useBoxStick() {
   return usePersistentState('box-stick', () => false)
 }
 
+const newRoll = () => Math.floor(Math.random() * 2 ** 32)
+
 /** The fall running per environment, so only one steps its boxes however many views share them. */
 const falling = new Map<string, number>()
 
@@ -32,6 +35,8 @@ export function useBoxes(env: Environment) {
   const { seed, size } = useSceneSettings(env)
   const gravity = useBoxGravity()
   const stick = useBoxStick()
+  /** Seeds the size and color of the next box, so a preview shows the box a click drops. */
+  const roll = useState('box-roll', newRoll)
   const state = useState<{ world: string, items: DroppedBox[] }>(`boxes-${env.id}`, () => ({ world: '', items: NONE }))
   const world = computed(() => `${seed.value}:${size.value}`)
   const items = () => (state.value.world === world.value ? state.value.items : NONE)
@@ -64,8 +69,13 @@ export function useBoxes(env: Environment) {
     boxes: computed<Primitive[]>(() => markRaw(items().map(b => b.box))),
     /** With `air`, out from the face clicked instead of against it. */
     drop(spot: DropSpot, air = false) {
-      set([...items(), dropBox(spot, { boxes: items(), stick: stick.value, air })])
+      set([...items(), dropBox(spot, { boxes: items(), stick: stick.value, air }, mulberry32(roll.value))])
+      roll.value = newRoll()
       fall()
+    },
+    /** The box a click there with `air` would drop. */
+    preview(spot: DropSpot, air = false) {
+      return dropBox(spot, { boxes: items(), stick: stick.value, air }, mulberry32(roll.value)).box
     },
     /** Takes out the box at index `i`; what it held up falls. */
     remove(i: number) {

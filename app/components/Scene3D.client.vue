@@ -7,6 +7,7 @@ import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createShaderAscii } from '~/lib/gpu/shaderAscii'
 import { backendName, createEnvironmentScene, createOrbitControls, getSharedRenderer } from '~/lib/three'
 import { createScenePicker, type Picked } from '~/lib/tracers'
+import type { ViewPick } from '~/composables/useAirPreview'
 
 const props = defineProps<{
   env: Environment
@@ -42,6 +43,7 @@ const inspected = ref<Picked & { x: number, y: number }>()
 const picker = createScenePicker()
 const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
+const airPreview = useAirPreview(props.env, pickAt)
 
 function onPointerDown(e: PointerEvent) {
   press = e.button === 0 || e.button === 2 ? { x: e.clientX, y: e.clientY } : undefined
@@ -52,6 +54,8 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
+  const rect = container.value!.getBoundingClientRect()
+  airPreview.move(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey, e.buttons !== 0)
   if (!drag || !following.value) return
   chaseCamera.orbit(e.clientX - drag.x, e.clientY - drag.y, container.value!.clientHeight)
   drag = { x: e.clientX, y: e.clientY }
@@ -69,14 +73,12 @@ function onPointerUp(e: PointerEvent) {
  */
 function inspect(e: PointerEvent) {
   if (!boxMode.value && (e.button !== 0 || e.shiftKey)) return
-  const generated = environmentScene()
-  if (!generated) return
   const rect = container.value!.getBoundingClientRect()
   const x = e.clientX - rect.left
   const y = e.clientY - rect.top
-  const position = camera.position.toArray()
-  const target = camera.position.clone().add(camera.getWorldDirection(camera.position.clone())).toArray()
-  const picked = picker.pick(props.env, generated, playerPose.value, performance.now() / 1000, { position, target, fov: camera.fov, aspect: camera.aspect }, x / rect.width, y / rect.height)
+  const view = pickAt(x, y)
+  if (!view) return
+  const { picked } = view
   if (boxMode.value) {
     if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
     else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)
@@ -85,8 +87,20 @@ function inspect(e: PointerEvent) {
   inspected.value = picked ? { ...picked, x, y } : undefined
 }
 
+/** What is under (x, y) of the view, with the ray tracer's copy of the scene on show. */
+function pickAt(x: number, y: number): ViewPick | undefined {
+  const generated = environmentScene()
+  if (!generated || !container.value) return
+  const { clientWidth: width, clientHeight: height } = container.value
+  const position = camera.position.toArray()
+  const target = camera.position.clone().add(camera.getWorldDirection(camera.position.clone())).toArray()
+  const cam = { position, target, fov: camera.fov, aspect: camera.aspect }
+  return { picked: picker.pick(props.env, generated, playerPose.value, performance.now() / 1000, cam, x / width, y / height), camera: cam, width, height }
+}
+
 function onWheel(e: WheelEvent) {
   inspected.value = undefined
+  airPreview.leave()
   if (!following.value) return
   e.preventDefault()
   chaseCamera.zoom(e.deltaY)
@@ -230,9 +244,11 @@ onBeforeUnmount(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
+    @pointerleave="airPreview.leave()"
     @wheel="onWheel"
     @contextmenu.prevent
   >
+    <BoxOutline v-if="airPreview.outline.value" :d="airPreview.outline.value" />
     <InspectLabel v-if="inspected" :picked="inspected" :x="inspected.x" :y="inspected.y" :left="inspected.x > container!.clientWidth / 2" />
   </div>
 </template>

@@ -1,4 +1,5 @@
 import { cameraBasis, distance, type Vec3 } from './math'
+import type { Camera } from './raycaster'
 
 export interface CameraView {
   position: Vec3
@@ -60,4 +61,18 @@ export function benchmarkView({ position: p, target: t }: CameraView, u: number)
   const zoom = 1 - 0.35 * Math.sin(Math.PI * u)
   const position: Vec3 = [t[0] + radius * zoom * Math.sin(angle), t[1] + (p[1] - t[1]) * zoom, t[2] + radius * zoom * Math.cos(angle)]
   return { position, target: [...t] }
+}
+
+/**
+ * Where a point shows in the camera's view, as (u, v), both 0..1 from the top left: the
+ * inverse of the ray through (u, v) in castRay. Undefined behind the camera.
+ */
+export function projectPoint(cam: Camera, p: Vec3): [number, number] | undefined {
+  const { forward: f, right: r, up } = cameraBasis(cam.position, cam.target)
+  const d = [p[0] - cam.position[0], p[1] - cam.position[1], p[2] - cam.position[2]]
+  const dot = (a: Vec3) => a[0] * d[0]! + a[1] * d[1]! + a[2] * d[2]!
+  const depth = dot(f)
+  if (depth < 0.1) return undefined
+  const tanHalf = Math.tan((cam.fov * Math.PI) / 360)
+  return [(dot(r) / depth / tanHalf / cam.aspect + 1) / 2, (1 - dot(up) / depth / tanHalf) / 2]
 }
