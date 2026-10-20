@@ -104,7 +104,11 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
   // Nudged off the surface, so a wall's spot finds the floor beside it, not its own top.
   const [x, y, z] = hit.point.map((v, k) => v + hit.normal[k]! * 0.05)
   const floor = heightBelow(scene, x!, y!, z!, i => !!generated.primitives[i]?.dropped)
-  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor }
+  // Dropped boxes come last, in the order they were dropped.
+  const box = hit.kind === 'primitive' && generated.primitives[hit.index]?.dropped
+    ? generated.primitives.slice(0, hit.index).filter(p => p.dropped).length
+    : undefined
+  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor, box }
 }
 
 /**

@@ -69,9 +69,9 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · WASD/arrows move or look · Q/E zoom (dragon: down/up)
-      Space/Shift dragon up/down · G box gravity · X clear boxes · Tab next environment · R characters/blocks
-      T day/night cycle · , and . an hour back/forward · N new world · O outlines
-      B backgrounds · C colors · Esc quit
+      Space/Shift dragon up/down · G box gravity · F stick boxes to faces · X clear boxes
+      Tab next environment · R characters/blocks · T day/night cycle · , and . an hour back/forward
+      N new world · O outlines · B backgrounds · C colors · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom, click to name what's there
        (in boxes mode: to drop a box there).`
 
@@ -109,6 +109,8 @@ let summary = world.summary
 /** Orbiting, where a click drops a box instead of naming what is there. */
 let boxMode = false
 let gravity = true
+/** Whether a dropped box sticks to the face clicked, and so doesn't fall. */
+let stick = false
 let boxes: DroppedBox[] = []
 let view: CameraView = structuredClone(env.camera ?? DEFAULT_VIEW)
 let playerKind: PlayerKind | null = null
@@ -255,7 +257,7 @@ function statusBar(loading?: string) {
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
   const moves = boxMode
-    ? `boxes: WASD look · Q/E zoom · click drops a box · G gravity ${gravity ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
+    ? `boxes: WASD look · Q/E zoom · click drops a box · G gravity ${gravity ? 'on' : 'off'} · F stick ${stick ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
     : !playerKind
         ? 'orbit: WASD look · Q/E zoom · click names it'
         : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
@@ -361,6 +363,7 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === '3') play('car')
     else if (name === '4') play(null, true)
     else if (name === 'g' && boxMode) gravity = !gravity
+    else if (name === 'f' && boxMode) stick = !stick
     else if (name === 'x' && boxMode) applyBoxes([])
     else if (name === 'n') newWorld()
     else if (name === 'tab') cycleEnvironment(1)
@@ -393,7 +396,7 @@ async function inspect(x: number, y: number) {
   if (!lastCamera || v < 0 || v > 1) return
   const picked = await tracer.pick(lastCamera, (x + 0.5) / cols, v)
   if (boxMode) {
-    if (picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked)])
+    if (picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked, boxes, stick)])
     showBars()
     return
   }

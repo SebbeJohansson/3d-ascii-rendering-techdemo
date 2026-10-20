@@ -16,6 +16,11 @@ export function useBoxGravity() {
   return usePersistentState('box-gravity', () => true)
 }
 
+/** Whether a dropped box sticks to the face it was dropped on, and so doesn't fall. */
+export function useBoxStick() {
+  return usePersistentState('box-stick', () => false)
+}
+
 /** The fall running per environment, so only one steps its boxes however many views share them. */
 const falling = new Map<string, number>()
 
@@ -26,6 +31,7 @@ const falling = new Map<string, number>()
 export function useBoxes(env: Environment) {
   const { seed, size } = useSceneSettings(env)
   const gravity = useBoxGravity()
+  const stick = useBoxStick()
   const state = useState<{ world: string, items: DroppedBox[] }>(`boxes-${env.id}`, () => ({ world: '', items: NONE }))
   const world = computed(() => `${seed.value}:${size.value}`)
   const items = () => (state.value.world === world.value ? state.value.items : NONE)
@@ -57,7 +63,7 @@ export function useBoxes(env: Environment) {
   return {
     boxes: computed<Primitive[]>(() => markRaw(items().map(b => b.box))),
     drop(spot: DropSpot) {
-      set([...items(), dropBox(spot)])
+      set([...items(), dropBox(spot, items(), stick.value)])
       fall()
     },
     /** Lets boxes left in the air fall, after gravity is turned on. */

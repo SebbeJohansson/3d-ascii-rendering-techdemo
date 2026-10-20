@@ -18,6 +18,7 @@ const playerKind = usePlayerKind()
 const boxMode = useBoxMode()
 const { boxes, fall, clear: clearBoxes } = useBoxes(props.env)
 const gravity = useBoxGravity()
+const stick = useBoxStick()
 watch(gravity, on => on && fall())
 
 /** Orbit, the boxes mode (orbit where a click drops a box) or a player: one at a time. */
@@ -76,12 +77,16 @@ function randomize() {
       · drag to look · scroll to zoom · click to name what's there
     </p>
     <p v-else class="keys">
-      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ boxMode ? 'click to drop a box onto what\'s there' : 'click to name what\'s there' }}
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ boxMode ? (stick ? 'click a face to stick a box onto it' : 'click to drop a box onto what\'s there') : 'click to name what\'s there' }}
     </p>
     <template v-if="boxMode">
       <label class="toggle">
         <input v-model="gravity" type="checkbox">
         Gravity
+      </label>
+      <label class="toggle">
+        <input v-model="stick" type="checkbox">
+        Stick to faces
       </label>
       <button v-if="boxes.length" type="button" class="link" @click="clearBoxes">
         Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
