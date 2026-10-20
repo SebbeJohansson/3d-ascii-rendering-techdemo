@@ -8,7 +8,7 @@ const props = defineProps<{
   lens?: boolean
 }>()
 
-const { method, color, cellBackground, outlines, stretch, occlusion, coarseDrag, atlas, worker, fontSize } = useAsciiSettings()
+const { method, color, cellBackground, blocks, outlines, stretch, occlusion, coarseDrag, atlas, worker, fontSize } = useAsciiSettings()
 const gpu = hasWebGpu()
 const METHODS: { id: AsciiMethod, name: string, hint: string }[] = [
   { id: 'cpu', name: 'CPU', hint: 'Ray traced in JavaScript, one ray per character.' },
@@ -21,6 +21,8 @@ const effective = computed(() => (props.lens && cellsOnly(method.value) ? 'cpu' 
 const traced = computed(() => effective.value !== 'shader')
 /** Drawn as characters, so the character settings apply. */
 const glyphs = computed(() => effective.value !== 'pixels')
+/** Blocks are colors without characters: the character settings don't apply. */
+const blocksOn = computed(() => traced.value && blocks.value)
 </script>
 
 <template>
@@ -54,20 +56,24 @@ const glyphs = computed(() => effective.value !== 'pixels')
     <!-- Reversed so dragging right means more detail. -->
     <input v-model.number="fontSize" type="range" min="3" max="20" step="1" class="reversed">
   </label>
-  <label v-if="glyphs" class="toggle">
-    <input v-model="color" type="checkbox">
+  <label v-if="traced && glyphs" class="toggle">
+    <input v-model="blocks" type="checkbox">
+    Blocks (two colored pixels per character, no characters)
+  </label>
+  <label v-if="glyphs" class="toggle" :class="{ disabled: blocksOn }">
+    <input v-model="color" type="checkbox" :disabled="blocksOn">
     Colored characters
   </label>
-  <label v-if="glyphs" class="toggle" :class="{ disabled: !color }">
-    <input v-model="cellBackground" type="checkbox" :disabled="!color">
+  <label v-if="glyphs" class="toggle" :class="{ disabled: !color || blocksOn }">
+    <input v-model="cellBackground" type="checkbox" :disabled="!color || blocksOn">
     Cell backgrounds (solid color)
   </label>
   <label v-if="traced && glyphs" class="toggle">
     <input v-model="outlines" type="checkbox">
     Outlines (line characters on edges)
   </label>
-  <label v-if="traced && glyphs" class="toggle">
-    <input v-model="stretch" type="checkbox">
+  <label v-if="traced && glyphs" class="toggle" :class="{ disabled: blocksOn }">
+    <input v-model="stretch" type="checkbox" :disabled="blocksOn">
     Stretch contrast (per frame)
   </label>
   <label v-if="traced" class="toggle">
@@ -78,8 +84,8 @@ const glyphs = computed(() => effective.value !== 'pixels')
     <input v-model="coarseDrag" type="checkbox">
     Lower resolution while dragging
   </label>
-  <label v-if="traced && glyphs" class="toggle">
-    <input v-model="atlas" type="checkbox">
+  <label v-if="traced && glyphs" class="toggle" :class="{ disabled: blocksOn }">
+    <input v-model="atlas" type="checkbox" :disabled="blocksOn">
     Glyph atlas (fast text)
   </label>
   <label v-if="effective === 'cpu'" class="toggle">

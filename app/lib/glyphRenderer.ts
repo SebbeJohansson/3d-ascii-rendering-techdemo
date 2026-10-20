@@ -10,6 +10,10 @@
  *   ~2x faster than fillText, ~7x faster than stamping glyphs with drawImage, but still most
  *   of a frame at ~3M device pixels.
  * - fillText: one canvas text call per character. Kept for comparison.
+ *
+ * Or no characters at all (blocks): two traced cells per character cell, stacked, each a
+ * solid color, like the terminal's half blocks. Twice the detail, colored pixels instead of
+ * characters.
  */
 import { cellColors, GLYPHS, pickGlyphs, type Cells, type StyleOptions } from './cellStyle'
 import { hexToBytes, hexToCss } from './color'
@@ -24,6 +28,8 @@ export interface DrawOptions extends StyleOptions {
   sky: number
   /** Use the glyph atlas instead of fillText. */
   atlas: boolean
+  /** Draw each cell as a solid block of color instead of a character (see resize's `blocks`). */
+  blocks?: boolean
   /**
    * One byte per cell: draw only the cells set to 1 and leave the rest of the canvas
    * transparent, so whatever is behind it shows through (the ASCII lens). Without it, every
@@ -60,9 +66,15 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
   let edgeStrength = new Float32Array(0)
   /** For the WebGL path: two RGBA texels per cell, see glyphGl.ts. */
   let cellData = new Uint8Array(0)
+  /** For blocks: one pixel per cell, drawn scaled up onto the canvas. */
+  let blockFrame = new ImageData(1, 1)
+  let blockCanvas: HTMLCanvasElement | undefined
 
-  /** Sizes the canvas and character grid. Returns the new grid size. */
-  function resize(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number, fontSize: number) {
+  /**
+   * Sizes the canvas and character grid. Returns the new grid size. With `blocks`, the grid
+   * has two rows per line of characters, each half a character high.
+   */
+  function resize(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number, fontSize: number, blocks = false) {
     width = cssWidth
     height = cssHeight
     const dpr = Math.min(window.devicePixelRatio, 2)
@@ -81,7 +93,7 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
     lineHeight = cellH / dpr
     shade = Math.min(1, fontSize / FULL_SHADE_FONT_SIZE)
     cols = Math.max(1, Math.floor(canvas.width / cellW))
-    rows = Math.max(1, Math.floor(canvas.height / cellH))
+    rows = Math.max(1, Math.floor(canvas.height / cellH)) * (blocks ? 2 : 1)
 
     // The atlas and frame buffer work in device pixels so glyphs stay sharp on high-DPI screens.
     atlasWidth = cellW * GLYPHS.length
@@ -102,6 +114,12 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
     edges = new Uint8Array(cols * rows)
     edgeStrength = new Float32Array(cols * rows)
     cellData = new Uint8Array(cols * rows * 8)
+    if (blocks) {
+      blockFrame = new ImageData(cols, rows)
+      blockCanvas ??= document.createElement('canvas')
+      blockCanvas.width = cols
+      blockCanvas.height = rows
+    }
     if (glCanvas && gpu === undefined) {
       try {
         gpu = createGlyphGl(glCanvas)
@@ -115,12 +133,12 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
     drawnOn = undefined
 
     // Cell size in CSS pixels, for mapping screen positions to cells.
-    return { cols, rows, cellWidth: charWidth, cellHeight: lineHeight }
+    return { cols, rows, cellWidth: charWidth, cellHeight: blocks ? lineHeight / 2 : lineHeight }
   }
 
   function draw(ctx: CanvasRenderingContext2D, cells: Cells, options: DrawOptions) {
     if (cells.ink.length !== cols * rows) return
-    const target = options.atlas && gpu ? 'gl' : '2d'
+    const target = options.atlas && gpu && !options.blocks ? 'gl' : '2d'
     if (target !== drawnOn) {
       if (target === 'gl') ctx.clearRect(0, 0, width, height)
       else gpu?.clear()
@@ -133,7 +151,8 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
       return
     }
     pickGlyphs(cells, cols, rows, options, glyphs, edgeStrength, edges)
-    if (target === 'gl') drawWithGl(gpu!, cells.rgb, options)
+    if (options.blocks) drawBlocks(ctx, cells.rgb, options)
+    else if (target === 'gl') drawWithGl(gpu!, cells.rgb, options)
     else if (options.atlas) drawWithAtlas(ctx, cells.rgb, options)
     else drawWithFillText(ctx, cells.rgb, options)
   }
@@ -171,6 +190,38 @@ export function createGlyphRenderer(glCanvas?: HTMLCanvasElement) {
       data[o + 7] = 255
     }
     gl.draw(data, sky, mask ? 0 : 1)
+  }
+
+  /**
+   * Each cell a solid block: its surface color, its outline's color on an edge, or the sky.
+   * One pixel per cell, scaled up without smoothing.
+   */
+  function drawBlocks(ctx: CanvasRenderingContext2D, rgb: Uint8Array, options: DrawOptions) {
+    const { mask } = options
+    const sky = hexToBytes(options.sky)
+    const c = new Uint8Array(6)
+    const data = blockFrame.data
+    for (let i = 0; i < glyphs.length; i++) {
+      const o = i * 4
+      if (mask && !mask[i]) {
+        data[o + 3] = 0
+        continue
+      }
+      const edge = edgeStrength[i]!
+      if (!glyphs[i]) data.set(sky, o)
+      else {
+        // Blocks are colors only: always in color, the surface as the cell's background.
+        cellColors(rgb, i, edge, { color: true, cellBackground: true }, 1, sky, c)
+        data.set(edge ? c.subarray(0, 3) : c.subarray(3, 6), o)
+      }
+      data[o + 3] = 255
+    }
+    const blockCtx = blockCanvas!.getContext('2d')!
+    blockCtx.putImageData(blockFrame, 0, 0)
+    ctx.clearRect(0, 0, width, height)
+    ctx.imageSmoothingEnabled = false
+    // Whole cells only, like the characters: the rest of the canvas is left to the background.
+    ctx.drawImage(blockCanvas!, 0, 0, cols * charWidth, (rows / 2) * lineHeight)
   }
 
   function drawWithFillText(ctx: CanvasRenderingContext2D, rgb: Uint8Array, options: DrawOptions) {

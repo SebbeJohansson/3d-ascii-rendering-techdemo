@@ -21,6 +21,8 @@ const props = defineProps<{
   color: boolean
   /** Fill each cell with its surface color and draw the character in a shade of it. */
   cellBackground: boolean
+  /** Two traced cells per character, stacked, each a solid block of color: no characters. */
+  blocks: boolean
   /** Draw characters from a pre-rendered glyph atlas instead of fillText. */
   atlas: boolean
   /** Spread each frame's ink over the whole character ramp. */
@@ -166,12 +168,12 @@ function draw() {
     return
   }
   if (!ctx) return
-  const { env, color, cellBackground, atlas, stretch, outlines, lens } = props
+  const { env, color, cellBackground, atlas, stretch, outlines, lens, blocks } = props
   if (lens && lastCamera) {
     if (mask.length !== cols * rows) mask = new Uint8Array(cols * rows)
     lensMask(lens, lastCamera, last.depths, cols, rows, cellWidth, cellHeight, mask)
   }
-  glyphs.draw(ctx, last, { sky: lighting.value.sky, color, cellBackground, atlas, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar, mask: lens && mask })
+  glyphs.draw(ctx, last, { sky: lighting.value.sky, color, cellBackground, atlas, blocks, stretch, outlines, fogNear: env.fogNear, fogFar: env.fogFar, mask: lens && mask })
 }
 
 function resize() {
@@ -188,7 +190,7 @@ function resize() {
     return
   }
   if (!ctx) return
-  ;({ cols, rows, cellWidth, cellHeight } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize))
+  ;({ cols, rows, cellWidth, cellHeight } = glyphs.resize(canvas.value, ctx, width, height, props.fontSize, props.blocks))
   if (gpuCanvas.value) {
     gpuCanvas.value.width = canvas.value.width
     gpuCanvas.value.height = canvas.value.height
@@ -226,11 +228,11 @@ function tick() {
 
 /**
  * How the GPU tracer should draw characters itself, or null where the CPU has to: the lens
- * and stretched contrast need the whole frame, and fillText is the CPU's own way to draw.
+ * and stretched contrast need the whole frame, and fillText and blocks are the CPU's own ways to draw.
  */
 function gpuGlyphs(): GpuGlyphs | null {
-  const { env, color, cellBackground, atlas, stretch, outlines, lens } = props
-  if (!atlas || stretch || lens) return null
+  const { env, color, cellBackground, atlas, stretch, outlines, lens, blocks } = props
+  if (!atlas || stretch || lens || blocks) return null
   return { ...glyphs.layout(), color, cellBackground, outlines, fogNear: env.fogNear, fogFar: env.fogFar, sky: hexToBytes(lighting.value.sky) }
 }
 
@@ -342,7 +344,7 @@ watch(() => [props.env, props.seed, props.size], rebuild)
 watch(boxes, b => tracer?.setBoxes(b))
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.occlusion, () => (dirty = true))
-watch(() => props.fontSize, resize)
+watch(() => [props.fontSize, props.blocks], resize)
 // The camera can also be moved from elsewhere (the 3D half of the split view).
 watch(view, () => (dirty = true))
 watch(timeOfDay, () => (dirty = true))

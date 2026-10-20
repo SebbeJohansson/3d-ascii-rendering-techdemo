@@ -53,6 +53,7 @@ export function useAsciiSettings() {
   return {
     color: usePersistentState('ascii-color', () => true),
     cellBackground: usePersistentState('ascii-cell-background', () => true),
+    blocks: usePersistentState('ascii-blocks', () => false),
     outlines: usePersistentState('ascii-outlines', () => true),
     stretch: usePersistentState('ascii-stretch', () => false),
     occlusion: usePersistentState('ascii-occlusion', () => false),
