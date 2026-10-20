@@ -259,7 +259,6 @@ function setView(next: CameraView) {
 function onPointerDown(e: PointerEvent) {
   canvas.value!.setPointerCapture(e.pointerId)
   drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey, startX: e.clientX, startY: e.clientY }
-  moving = true
   inspected.value = undefined
 }
 
@@ -277,6 +276,8 @@ function onPointerMove(e: PointerEvent) {
   const dy = e.clientY - drag.y
   drag.x = e.clientX
   drag.y = e.clientY
+  // A click wobbles a little: only a drag traces coarsely.
+  if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) >= CLICK_SLOP) moving = true
   if (playerPose.value) chaseCamera.orbit(dx, dy, height)
   else setView(drag.pan ? panView(view.value, dx, dy, height) : orbitView(view.value, dx, dy, height))
 }
