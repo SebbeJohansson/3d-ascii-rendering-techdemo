@@ -133,6 +133,18 @@ export function fallBoxes(boxes: DroppedBox[], dt: number): DroppedBox[] | undef
   return moved ? next : undefined
 }
 
+/**
+ * The boxes without box `i`. Boxes stuck to it come loose, and can fall; the boxes stuck to
+ * those stay stuck to them.
+ */
+export function removeBox(boxes: readonly DroppedBox[], i: number): DroppedBox[] {
+  return boxes.filter((_, j) => j !== i).map((b) => {
+    if (b.on === undefined || b.on < i) return b
+    if (b.on > i) return { ...b, on: b.on - 1 }
+    return { ...b, stuck: undefined, on: undefined }
+  })
+}
+
 /** The generated scene with dropped boxes added, and counted in its summary. */
 export function withBoxes(scene: EnvironmentScene, boxes: readonly Primitive[]): EnvironmentScene {
   if (!boxes.length) return scene

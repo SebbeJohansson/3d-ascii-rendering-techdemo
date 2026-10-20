@@ -1,5 +1,5 @@
 import type { Environment, Primitive } from '~/environments'
-import { dropBox, fallBoxes, type DroppedBox, type DropSpot } from '~/lib/boxes'
+import { dropBox, fallBoxes, removeBox, type DroppedBox, type DropSpot } from '~/lib/boxes'
 
 const NONE: DroppedBox[] = []
 
@@ -65,6 +65,11 @@ export function useBoxes(env: Environment) {
     /** With `air`, out from the face clicked instead of against it. */
     drop(spot: DropSpot, air = false) {
       set([...items(), dropBox(spot, { boxes: items(), stick: stick.value, air })])
+      fall()
+    },
+    /** Takes out the box at index `i`; what it held up falls. */
+    remove(i: number) {
+      set(removeBox(items(), i))
       fall()
     },
     /** Lets boxes left in the air fall, after gravity is turned on. */

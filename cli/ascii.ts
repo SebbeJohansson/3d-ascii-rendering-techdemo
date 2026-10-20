@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util'
 import { ENVIRONMENTS, findEnvironment, type Environment, type EnvironmentScene } from '../app/environments'
 import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
-import { dropBox, fallBoxes, withBoxes, type DroppedBox } from '../app/lib/boxes'
+import { dropBox, fallBoxes, removeBox, withBoxes, type DroppedBox } from '../app/lib/boxes'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -73,7 +73,7 @@ Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · WASD/arrows move or look · Q/E
       Tab next environment · R characters/blocks · T day/night cycle · , and . an hour back/forward
       N new world · O outlines · B backgrounds · C colors · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom, click to name what's there
-       (in boxes mode: to drop a box there, Shift/Alt-click in the air).`
+       (in boxes mode: to drop a box there, Shift/Alt-click in the air, right-click removes one).`
 
 if (values.help) {
   console.log(USAGE)
@@ -257,7 +257,7 @@ function statusBar(loading?: string) {
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
   const moves = boxMode
-    ? `boxes: WASD look · Q/E zoom · click drops a box · Alt-click in the air · G gravity ${gravity ? 'on' : 'off'} · F stick ${stick ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
+    ? `boxes: WASD look · Q/E zoom · click drops a box · Alt-click in the air · right-click removes · G gravity ${gravity ? 'on' : 'off'} · F stick ${stick ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
     : !playerKind
         ? 'orbit: WASD look · Q/E zoom · click names it'
         : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
@@ -391,15 +391,16 @@ let lastCamera: Camera | undefined
 
 /**
  * Names what is under cell (x, y) of the terminal, in the status bar, or drops a box there:
- * in the air with `air`.
+ * in the air with `air`. With `remove`, takes out the box there.
  */
-async function inspect(x: number, y: number, { air = false } = {}) {
+async function inspect(x: number, y: number, { air = false, remove = false } = {}) {
   // Terminal row 0 is the status bar; the frame starts below it.
   const v = (y - 1 + 0.5) / rows
   if (!lastCamera || v < 0 || v > 1) return
   const picked = await tracer.pick(lastCamera, (x + 0.5) / cols, v)
   if (boxMode) {
-    if (picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked, { boxes, stick, air })])
+    if (remove && picked?.box !== undefined) applyBoxes(removeBox(boxes, picked.box))
+    else if (!remove && picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked, { boxes, stick, air })])
     showBars()
     return
   }
@@ -421,8 +422,8 @@ function onMouse(e: MouseEvent) {
   }
   if (e.kind === 'down') drag = { x: e.x, y: e.y, pan: e.button === 2, moved: false, air: !!e.modified }
   else if (e.kind === 'up') {
-    // A left press that never left its cell is a click.
-    if (drag && !drag.pan && !drag.moved) void inspect(e.x, e.y, { air: drag.air })
+    // A press that never left its cell is a click; a right one only removes boxes.
+    if (drag && !drag.moved && (!drag.pan || boxMode)) void inspect(e.x, e.y, { air: drag.air, remove: drag.pan })
     drag = undefined
   }
   else if (drag) {

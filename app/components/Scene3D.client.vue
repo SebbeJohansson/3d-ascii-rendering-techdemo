@@ -41,10 +41,10 @@ const CLICK_SLOP = 4
 const inspected = ref<Picked & { x: number, y: number }>()
 const picker = createScenePicker()
 const boxMode = useBoxMode()
-const { boxes, drop } = useBoxes(props.env)
+const { boxes, drop, remove } = useBoxes(props.env)
 
 function onPointerDown(e: PointerEvent) {
-  press = e.button === 0 ? { x: e.clientX, y: e.clientY } : undefined
+  press = e.button === 0 || e.button === 2 ? { x: e.clientX, y: e.clientY } : undefined
   inspected.value = undefined
   if (!following.value) return
   container.value!.setPointerCapture(e.pointerId)
@@ -65,10 +65,10 @@ function onPointerUp(e: PointerEvent) {
 
 /**
  * Names what is under the pointer, with the ray tracer's copy of the scene on show, or drops
- * a box there: in the air with Shift.
+ * a box there: in the air with Shift. A right click takes out a box.
  */
 function inspect(e: PointerEvent) {
-  if (!boxMode.value && e.shiftKey) return
+  if (!boxMode.value && (e.button !== 0 || e.shiftKey)) return
   const generated = environmentScene()
   if (!generated) return
   const rect = container.value!.getBoundingClientRect()
@@ -78,7 +78,8 @@ function inspect(e: PointerEvent) {
   const target = camera.position.clone().add(camera.getWorldDirection(camera.position.clone())).toArray()
   const picked = picker.pick(props.env, generated, playerPose.value, performance.now() / 1000, { position, target, fov: camera.fov, aspect: camera.aspect }, x / rect.width, y / rect.height)
   if (boxMode.value) {
-    if (picked && picked.kind !== 'player') drop(picked, e.shiftKey)
+    if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
+    else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)
     return
   }
   inspected.value = picked ? { ...picked, x, y } : undefined
