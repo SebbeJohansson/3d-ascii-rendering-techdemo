@@ -7,6 +7,6 @@
   "files": ["dist"],
   "engines": { "node": ">=20" },
   "keywords": ["ascii", "ray tracing", "terminal", "3d", "demo"],
-  "repository": { "type": "git", "url": "git+https://github.com/sebbejohansson/3dmodel-rendering-techdemo.git" },
-  "homepage": "https://sebbejohansson.github.io/3dmodel-rendering-techdemo/"
+  "repository": { "type": "git", "url": "git+https://github.com/SebbeJohansson/3d-ascii-rendering-techdemo.git" },
+  "homepage": "https://sebbejohansson.github.io/3d-ascii-rendering-techdemo/"
 }

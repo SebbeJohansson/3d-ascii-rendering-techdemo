@@ -2,7 +2,7 @@
 
 Procedurally generated scenes drawn two ways: as a normal 3D view with three.js, and as ASCII art from a small CPU ray tracer written from scratch.
 
-Live demo: https://sebbejohansson.github.io/3dmodel-rendering-techdemo/
+Live demo: https://sebbejohansson.github.io/3d-ascii-rendering-techdemo/
 
 <img width="1440" height="832" alt="image" src="https://github.com/user-attachments/assets/f7841753-19cd-43dd-b70a-70cccdc4394d" />
 
@@ -103,7 +103,7 @@ Other scripts:
 
 ## Deployment
 
-Every push to `main` builds the site with `yarn generate` and publishes it to GitHub Pages (see `.github/workflows/deploy.yml`). The workflow sets `NUXT_APP_BASE_URL` to the repo name so assets load from the `/3dmodel-rendering-techdemo/` subpath.
+Every push to `main` builds the site with `yarn generate` and publishes it to GitHub Pages (see `.github/workflows/deploy.yml`). The workflow sets `NUXT_APP_BASE_URL` to the repo name so assets load from the `/3d-ascii-rendering-techdemo/` subpath.
 
 ## Ideas
 
