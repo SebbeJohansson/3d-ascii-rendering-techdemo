@@ -14,6 +14,8 @@ const MIN_SIDE = 1
 const MAX_SIDE = 5
 /** Space left between a box and the wall it was dropped against. */
 const GAP = 0.01
+/** How far out from the face clicked a box dropped in the air appears. */
+const AIR = 8
 /** m/s². */
 export const GRAVITY = 9.81
 
@@ -44,15 +46,16 @@ export interface DroppedBox {
  * A box of random size and color at a clicked spot: on top of a roof or box, under a
  * ceiling, or against a wall on the side that was clicked, its middle at the click's height.
  * With `stick`, it sticks there, and a box clicked gets the new one centered on its face.
+ * With `air`, it appears out from the face clicked instead, stuck to nothing.
  */
-export function dropBox(spot: DropSpot, boxes: readonly DroppedBox[] = [], stick = false, rand = Math.random): DroppedBox {
+export function dropBox(spot: DropSpot, { boxes = [], stick = false, air = false }: { boxes?: readonly DroppedBox[], stick?: boolean, air?: boolean } = {}, rand = Math.random): DroppedBox {
   const side = () => Math.round(between(rand, MIN_SIDE, MAX_SIDE) * 2) / 2
   const width = side()
   const depth = side()
   const height = side()
   const color = pick(rand, COLORS)
   const label = `Box · ${width} × ${depth} × ${height} m`
-  const target = stick && spot.box !== undefined ? boxes[spot.box]?.box : undefined
+  const target = stick && !air && spot.box !== undefined ? boxes[spot.box]?.box : undefined
   if (target) {
     const [nx, ny, nz] = spot.normal
     let { x, y, z } = target
@@ -74,8 +77,13 @@ export function dropBox(spot: DropSpot, boxes: readonly DroppedBox[] = [], stick
     else z += Math.sign(nz) * (depth / 2 + GAP)
     y = Math.max(floor, y - height / 2)
   }
+  if (air) {
+    x += nx * AIR
+    y = Math.max(floor, y + ny * AIR)
+    z += nz * AIR
+  }
   const box: Primitive = { shape: 'box', x, y, z, width, depth, height, color, roughness: 0.7, label, dropped: true }
-  return { box, floor: Math.min(floor, y), speed: 0, stuck: stick || undefined }
+  return { box, floor: Math.min(floor, y), speed: 0, stuck: (stick && !air) || undefined }
 }
 
 const overlap = (a: Primitive, b: Primitive) =>

@@ -77,7 +77,12 @@ function randomize() {
       · drag to look · scroll to zoom · click to name what's there
     </p>
     <p v-else class="keys">
-      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · {{ boxMode ? (stick ? 'click a face to stick a box onto it' : 'click to drop a box onto what\'s there') : 'click to name what\'s there' }}
+      drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · <template v-if="boxMode">
+        {{ stick ? 'click a face to stick a box onto it' : 'click to drop a box onto what\'s there' }} · <kbd>Shift</kbd> + click drops it in the air
+      </template>
+      <template v-else>
+        click to name what's there
+      </template>
     </p>
     <template v-if="boxMode">
       <label class="toggle">

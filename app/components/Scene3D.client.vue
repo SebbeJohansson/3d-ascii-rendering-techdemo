@@ -33,7 +33,7 @@ const playerPose = usePlayerPose(props.env)
 const following = computed(() => !!playerPose.value)
 const chaseCamera = useChaseCamera()
 let drag: { x: number, y: number } | undefined
-/** Where the last press started: a left press that ends near it is a click. */
+/** Where the last press started: a press that ends near it is a click. */
 let press: { x: number, y: number } | undefined
 /** A press that moves less than this many pixels is a click, not a drag. */
 const CLICK_SLOP = 4
@@ -44,7 +44,7 @@ const boxMode = useBoxMode()
 const { boxes, drop } = useBoxes(props.env)
 
 function onPointerDown(e: PointerEvent) {
-  press = e.button === 0 && !e.shiftKey ? { x: e.clientX, y: e.clientY } : undefined
+  press = e.button === 0 ? { x: e.clientX, y: e.clientY } : undefined
   inspected.value = undefined
   if (!following.value) return
   container.value!.setPointerCapture(e.pointerId)
@@ -65,9 +65,10 @@ function onPointerUp(e: PointerEvent) {
 
 /**
  * Names what is under the pointer, with the ray tracer's copy of the scene on show, or drops
- * a box there.
+ * a box there: in the air with Shift.
  */
 function inspect(e: PointerEvent) {
+  if (!boxMode.value && e.shiftKey) return
   const generated = environmentScene()
   if (!generated) return
   const rect = container.value!.getBoundingClientRect()
@@ -77,7 +78,7 @@ function inspect(e: PointerEvent) {
   const target = camera.position.clone().add(camera.getWorldDirection(camera.position.clone())).toArray()
   const picked = picker.pick(props.env, generated, playerPose.value, performance.now() / 1000, { position, target, fov: camera.fov, aspect: camera.aspect }, x / rect.width, y / rect.height)
   if (boxMode.value) {
-    if (picked && picked.kind !== 'player') drop(picked)
+    if (picked && picked.kind !== 'player') drop(picked, e.shiftKey)
     return
   }
   inspected.value = picked ? { ...picked, x, y } : undefined

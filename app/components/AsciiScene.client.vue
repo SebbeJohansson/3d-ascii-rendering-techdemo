@@ -235,7 +235,8 @@ function gpuGlyphs(): GpuGlyphs | null {
 
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
 // player, any drag orbits and the wheel zooms, both through its chase camera. A left click
-// that barely moves names what is under the pointer.
+// that barely moves names what is under the pointer. In the boxes mode a click drops a box,
+// in the air with Shift.
 let drag: { x: number, y: number, pan: boolean, startX: number, startY: number } | undefined
 /** A press that moves less than this many pixels is a click, not a drag. */
 const CLICK_SLOP = 4
@@ -273,7 +274,8 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp(e: PointerEvent) {
-  if (drag && !drag.pan && e.type === 'pointerup' && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < CLICK_SLOP) void inspect(e)
+  const click = !drag?.pan || (boxMode.value && e.shiftKey)
+  if (drag && click && e.type === 'pointerup' && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < CLICK_SLOP) void inspect(e)
   drag = undefined
   stopMoving()
 }
@@ -289,7 +291,7 @@ async function inspect(e: PointerEvent) {
   const y = e.clientY - rect.top
   const picked = await tracer.pick(lastCamera ?? camera(), x / rect.width, y / rect.height)
   if (boxMode.value) {
-    if (picked && picked.kind !== 'player') drop(picked)
+    if (picked && picked.kind !== 'player') drop(picked, e.shiftKey)
     return
   }
   inspected.value = picked ? { ...picked, x, y } : undefined

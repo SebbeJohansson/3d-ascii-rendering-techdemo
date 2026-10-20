@@ -62,8 +62,9 @@ export function useBoxes(env: Environment) {
 
   return {
     boxes: computed<Primitive[]>(() => markRaw(items().map(b => b.box))),
-    drop(spot: DropSpot) {
-      set([...items(), dropBox(spot, items(), stick.value)])
+    /** With `air`, out from the face clicked instead of against it. */
+    drop(spot: DropSpot, air = false) {
+      set([...items(), dropBox(spot, { boxes: items(), stick: stick.value, air })])
       fall()
     },
     /** Lets boxes left in the air fall, after gravity is turned on. */

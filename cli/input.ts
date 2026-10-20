@@ -27,6 +27,8 @@ export interface MouseEvent {
   y: number
   /** For wheel events: -1 up, 1 down. */
   delta: number
+  /** Shift, Alt or Ctrl held, if the terminal passes it on. */
+  modified?: boolean
 }
 
 export interface InputHandlers {
@@ -109,7 +111,7 @@ export function createInput(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream
       const x = Number(m[2]) - 1
       const y = Number(m[3]) - 1
       if (b & 64) onMouse({ kind: 'wheel', button: 0, x, y, delta: b & 1 ? 1 : -1 })
-      else onMouse({ kind: m[4] === 'm' ? 'up' : b & 32 ? 'drag' : 'down', button: b & 3, x, y, delta: 0 })
+      else onMouse({ kind: m[4] === 'm' ? 'up' : b & 32 ? 'drag' : 'down', button: b & 3, x, y, delta: 0, modified: !!(b & 28) })
       return
     }
     // Legacy keys: arrows, Ctrl+C, a lone escape, plain characters.
