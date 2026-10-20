@@ -16,16 +16,38 @@ const props = defineProps<{
 const { seed, size } = useSceneSettings(props.env)
 const playerKind = usePlayerKind()
 const boxMode = useBoxMode()
-const { boxes, fall, clear: clearBoxes } = useBoxes(props.env)
+const { count: boxCount, fall, clear: clearBoxes } = useBoxes(props.env)
 const gravity = useBoxGravity()
 const stick = useBoxStick()
 watch(gravity, on => on && fall())
 
-/** Orbit, the boxes mode (orbit where a click drops a box) or a player: one at a time. */
-function play(kind: PlayerKind | null, boxes = false) {
+const towerMode = useTowerMode()
+const tower = useTower(props.env)
+
+/**
+ * Orbit, the boxes mode (orbit where a click drops a box), the tower game (orbit where a
+ * click drops the swinging box) or a player: one at a time.
+ */
+function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower') {
   playerKind.value = kind
-  boxMode.value = boxes
+  boxMode.value = mode === 'boxes'
+  towerMode.value = mode === 'tower'
 }
+/** Space drops the swinging box; kept from scrolling or pressing a focused button. */
+function onKey(e: KeyboardEvent) {
+  if (!towerMode.value || e.code !== 'Space' || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+  e.preventDefault()
+  if (e.type === 'keydown' && !e.repeat) tower.drop()
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('keyup', onKey)
+})
+
 const { time: timeOfDay, cycling } = useTimeOfDay()
 
 const benchmark = useBenchmark()
@@ -59,11 +81,14 @@ function randomize() {
       </NuxtLink>
     </nav>
     <nav>
-      <button type="button" :class="{ active: !playerKind && !boxMode }" @click="play(null)">
+      <button type="button" :class="{ active: !playerKind && !boxMode && !towerMode }" @click="play(null)">
         Orbit
       </button>
-      <button type="button" :class="{ active: boxMode }" @click="play(null, true)">
+      <button type="button" :class="{ active: boxMode }" @click="play(null, 'boxes')">
         Boxes
+      </button>
+      <button type="button" :class="{ active: towerMode }" @click="play(null, 'tower')">
+        Tower
       </button>
       <button v-for="p in PLAYERS" :key="p.id" type="button" :class="{ active: playerKind === p.id }" @click="play(p.id)">
         {{ p.name }}
@@ -80,10 +105,27 @@ function randomize() {
       drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · <template v-if="boxMode">
         {{ stick ? 'click a face to stick a box onto it' : 'click to drop a box onto what\'s there' }} · <kbd>Shift</kbd> + click drops it in the air · right-click removes one
       </template>
+      <template v-else-if="towerMode">
+        {{ tower.game.value && !tower.game.value.over ? 'click or' : 'click a spot to build a tower there ·' }} <kbd>Space</kbd> drops the box
+      </template>
       <template v-else>
         click to name what's there
       </template>
     </p>
+    <template v-if="towerMode">
+      <p class="score">
+        <template v-if="tower.game.value?.over">
+          Missed! Tower of {{ tower.game.value.score }} · click to start a new one
+        </template>
+        <template v-else>
+          Height: {{ tower.game.value?.score ?? 0 }}
+        </template>
+        · Best: {{ tower.best.value }}
+      </p>
+      <button v-if="tower.game.value" type="button" class="link" @click="tower.clear()">
+        Clear tower
+      </button>
+    </template>
     <template v-if="boxMode">
       <label class="toggle">
         <input v-model="gravity" type="checkbox">
@@ -93,8 +135,8 @@ function randomize() {
         <input v-model="stick" type="checkbox">
         Stick to faces
       </label>
-      <button v-if="boxes.length" type="button" class="link" @click="clearBoxes">
-        Clear {{ boxes.length }} {{ boxes.length === 1 ? 'box' : 'boxes' }}
+      <button v-if="boxCount" type="button" class="link" @click="clearBoxes">
+        Clear {{ boxCount }} {{ boxCount === 1 ? 'box' : 'boxes' }}
       </button>
     </template>
     <label>
@@ -303,6 +345,12 @@ small {
   font-size: 12px;
   line-height: 1.8;
   color: #555;
+}
+
+.score {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 kbd {

@@ -28,8 +28,8 @@ const newRoll = () => Math.floor(Math.random() * 2 ** 32)
 const falling = new Map<string, number>()
 
 /**
- * Boxes dropped into an environment, shared by its views. They belong to one world: a new
- * seed or size starts without any.
+ * Boxes dropped into an environment, shared by its views, with the tower game's on show
+ * too. They belong to one world: a new seed or size starts without any.
  */
 export function useBoxes(env: Environment) {
   const { seed, size } = useSceneSettings(env)
@@ -37,6 +37,7 @@ export function useBoxes(env: Environment) {
   const stick = useBoxStick()
   /** Seeds the size and color of the next box, so a preview shows the box a click drops. */
   const roll = useState('box-roll', newRoll)
+  const tower = useTower(env)
   const state = useState<{ world: string, items: DroppedBox[] }>(`boxes-${env.id}`, () => ({ world: '', items: NONE }))
   const world = computed(() => `${seed.value}:${size.value}`)
   const items = () => (state.value.world === world.value ? state.value.items : NONE)
@@ -66,7 +67,10 @@ export function useBoxes(env: Environment) {
   }
 
   return {
-    boxes: computed<Primitive[]>(() => markRaw(items().map(b => b.box))),
+    /** The dropped boxes, then the tower game's: what the views show and players bump into. */
+    boxes: computed<Primitive[]>(() => markRaw([...items().map(b => b.box), ...tower.boxes.value])),
+    /** Boxes dropped in the boxes mode. */
+    count: computed(() => items().length),
     /** With `air`, out from the face clicked instead of against it. */
     drop(spot: DropSpot, air = false) {
       set([...items(), dropBox(spot, { boxes: items(), stick: stick.value, air }, mulberry32(roll.value))])

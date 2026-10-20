@@ -43,6 +43,8 @@ const inspected = ref<Picked & { x: number, y: number }>()
 const picker = createScenePicker()
 const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
+const towerMode = useTowerMode()
+const tower = useTower(props.env)
 const dropPreview = useDropPreview(props.env, pickAt)
 
 function onPointerDown(e: PointerEvent) {
@@ -72,13 +74,22 @@ function onPointerUp(e: PointerEvent) {
  * a box there: in the air with Shift. A right click takes out a box.
  */
 function inspect(e: PointerEvent) {
-  if (!boxMode.value && (e.button !== 0 || e.shiftKey)) return
+  if (!boxMode.value && !towerMode.value && (e.button !== 0 || e.shiftKey)) return
+  // Mid-game a click drops the swinging box at once: no need to know what is under it.
+  if (towerMode.value && tower.game.value && !tower.game.value.over) {
+    if (e.button === 0) tower.drop()
+    return
+  }
   const rect = container.value!.getBoundingClientRect()
   const x = e.clientX - rect.left
   const y = e.clientY - rect.top
   const view = pickAt(x, y)
   if (!view) return
   const { picked } = view
+  if (towerMode.value) {
+    if (e.button === 0 && picked && picked.kind !== 'player') tower.start(picked)
+    return
+  }
   if (boxMode.value) {
     if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
     else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)

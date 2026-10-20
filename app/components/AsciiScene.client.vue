@@ -247,6 +247,8 @@ const CLICK_SLOP = 4
 const inspected = ref<Picked & { x: number, y: number }>()
 const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
+const towerMode = useTowerMode()
+const tower = useTower(props.env)
 const dropPreview = useDropPreview(props.env, pickAt)
 
 function setView(next: CameraView) {
@@ -280,7 +282,7 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp(e: PointerEvent) {
-  const click = !drag?.pan || boxMode.value
+  const click = !drag?.pan || boxMode.value || towerMode.value
   if (drag && click && e.type === 'pointerup' && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < CLICK_SLOP) void inspect(e)
   drag = undefined
   stopMoving()
@@ -292,12 +294,21 @@ function onPointerUp(e: PointerEvent) {
  */
 async function inspect(e: PointerEvent) {
   if (!canvas.value) return
+  // Mid-game a click drops the swinging box at once: no need to know what is under it.
+  if (towerMode.value && tower.game.value && !tower.game.value.over) {
+    if (e.button === 0) tower.drop()
+    return
+  }
   const rect = canvas.value.getBoundingClientRect()
   const x = e.clientX - rect.left
   const y = e.clientY - rect.top
   const view = await pickAt(x, y)
   if (!view) return
   const { picked } = view
+  if (towerMode.value) {
+    if (e.button === 0 && picked && picked.kind !== 'player') tower.start(picked)
+    return
+  }
   if (boxMode.value) {
     if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
     else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)

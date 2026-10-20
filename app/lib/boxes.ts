@@ -85,8 +85,9 @@ export function dropBox(spot: DropSpot, { boxes = [], stick = false, air = false
   return { box, floor: Math.min(floor, rest), speed: 0, stuck: (stick && !air) || undefined }
 }
 
+/** Whether two boxes overlap seen from above; boxes that only touch don't, despite rounding. */
 const overlap = (a: Primitive, b: Primitive) =>
-  Math.abs(a.x - b.x) < (a.width + b.width) / 2 && Math.abs(a.z - b.z) < (a.depth + b.depth) / 2
+  Math.abs(a.x - b.x) < (a.width + b.width) / 2 - 1e-6 && Math.abs(a.z - b.z) < (a.depth + b.depth) / 2 - 1e-6
 
 /** Whether box `i` is stuck to box `to`, directly or through other boxes. */
 function stuckTo(boxes: readonly DroppedBox[], i: number, to: number) {

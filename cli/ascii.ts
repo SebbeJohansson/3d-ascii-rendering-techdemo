@@ -9,6 +9,7 @@ import { ENVIRONMENTS, findEnvironment, type Environment, type EnvironmentScene 
 import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, type CameraView } from '../app/lib/camera'
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { dropBox, fallBoxes, removeBox, withBoxes, type DroppedBox } from '../app/lib/boxes'
+import { dropTower, startTower, stepTower, type TowerGame } from '../app/lib/tower'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -68,12 +69,13 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --benchmark       fly a ${BENCH_SECONDS} s camera path, then print fps and where frame time went
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
-Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · WASD/arrows move or look · Q/E zoom (dragon: down/up)
+Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower game · WASD/arrows move or look · Q/E zoom (dragon: down/up)
       Space/Shift dragon up/down · G box gravity · F stick boxes to faces · X clear boxes
       Tab next environment · R characters/blocks · T day/night cycle · , and . an hour back/forward
       N new world · O outlines · B backgrounds · C colors · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom, click to name what's there
-       (in boxes mode: to drop a box there, Shift/Alt-click in the air, right-click removes one).`
+       (in boxes mode: to drop a box there, Shift/Alt-click in the air, right-click removes one;
+       in the tower game: to start a tower there, then click or Space drops the swinging box).`
 
 if (values.help) {
   console.log(USAGE)
@@ -112,6 +114,11 @@ let gravity = true
 /** Whether a dropped box sticks to the face clicked, and so doesn't fall. */
 let stick = false
 let boxes: DroppedBox[] = []
+/** Orbiting, where a click starts a stacking tower game or drops its swinging box. */
+let towerMode = false
+let tower: TowerGame | undefined
+/** The highest tower stacked since starting. */
+let towerBest = 0
 let view: CameraView = structuredClone(env.camera ?? DEFAULT_VIEW)
 let playerKind: PlayerKind | null = null
 let pose: PlayerPose | undefined
@@ -256,12 +263,14 @@ function statusBar(loading?: string) {
 
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
-  const moves = boxMode
+  const moves = towerMode
+    ? `tower: WASD look · Q/E zoom · ${!tower ? 'click a spot to build a tower there' : tower.over ? `missed! tower of ${tower.score} · click a spot for a new one` : `height ${tower.score} · click/Space drops`} · best ${towerBest}`
+    : boxMode
     ? `boxes: WASD look · Q/E zoom · click drops a box · Alt-click in the air · right-click removes · G gravity ${gravity ? 'on' : 'off'} · F stick ${stick ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
     : !playerKind
         ? 'orbit: WASD look · Q/E zoom · click names it'
         : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · 4 boxes · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
@@ -277,17 +286,29 @@ function layout() {
   showBars()
 }
 
-/** Hands the boxes to the tracer and to the player's collisions. */
 function applyBoxes(next: DroppedBox[]) {
   boxes = next
-  world = withBoxes(generated, boxes.map(b => b.box))
-  tracer.setBoxes(boxes.map(b => b.box))
+  showBoxes()
+}
+
+function applyTower(next: TowerGame | undefined) {
+  tower = next
+  if (next && next.score > towerBest) towerBest = next.score
+  showBoxes()
+}
+
+/** Hands the dropped boxes and the tower game's to the tracer and to the player's collisions. */
+function showBoxes() {
+  const all = [...boxes, ...(tower?.boxes ?? [])].map(b => b.box)
+  world = withBoxes(generated, all)
+  tracer.setBoxes(all)
   dirty = true
 }
 
-/** Orbit, the boxes mode or a player: one at a time. */
-function play(kind: PlayerKind | null, dropsBoxes = false) {
-  boxMode = dropsBoxes
+/** Orbit, the boxes mode, the tower game or a player: one at a time. */
+function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower') {
+  boxMode = mode === 'boxes'
+  towerMode = mode === 'tower'
   spawn(kind)
 }
 
@@ -315,6 +336,7 @@ function spawn(kind: PlayerKind | null) {
 function rebuild() {
   generated = env.generate(seed, size)
   // A new world starts without boxes.
+  tower = undefined
   applyBoxes([])
   tracer.setScene(env.id, seed, size)
   // A new color for the player too, spawned fresh in the new world.
@@ -361,7 +383,9 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === '1') play(null)
     else if (name === '2') play('dragon')
     else if (name === '3') play('car')
-    else if (name === '4') play(null, true)
+    else if (name === '4') play(null, 'boxes')
+    else if (name === '5') play(null, 'tower')
+    else if (name === 'space' && towerMode && tower && !tower.over) applyTower(dropTower(tower))
     else if (name === 'g' && boxMode) gravity = !gravity
     else if (name === 'f' && boxMode) stick = !stick
     else if (name === 'x' && boxMode) applyBoxes([])
@@ -391,13 +415,25 @@ let lastCamera: Camera | undefined
 
 /**
  * Names what is under cell (x, y) of the terminal, in the status bar, or drops a box there:
- * in the air with `air`. With `remove`, takes out the box there.
+ * in the air with `air`. With `remove`, takes out the box there. In the tower game, starts a
+ * tower there or drops the swinging box.
  */
 async function inspect(x: number, y: number, { air = false, remove = false } = {}) {
   // Terminal row 0 is the status bar; the frame starts below it.
   const v = (y - 1 + 0.5) / rows
   if (!lastCamera || v < 0 || v > 1) return
+  // Mid-game a click drops the swinging box at once: no need to know what is under it.
+  if (towerMode && tower && !tower.over) {
+    if (!remove) applyTower(dropTower(tower))
+    showBars()
+    return
+  }
   const picked = await tracer.pick(lastCamera, (x + 0.5) / cols, v)
+  if (towerMode) {
+    if (!remove && picked && picked.kind !== 'player') applyTower(startTower(picked))
+    showBars()
+    return
+  }
   if (boxMode) {
     if (remove && picked?.box !== undefined) applyBoxes(removeBox(boxes, picked.box))
     else if (!remove && picked && picked.kind !== 'player') applyBoxes([...boxes, dropBox(picked, { boxes, stick, air })])
@@ -423,7 +459,7 @@ function onMouse(e: MouseEvent) {
   if (e.kind === 'down') drag = { x: e.x, y: e.y, pan: e.button === 2, moved: false, air: !!e.modified }
   else if (e.kind === 'up') {
     // A press that never left its cell is a click; a right one only removes boxes.
-    if (drag && !drag.moved && (!drag.pan || boxMode)) void inspect(e.x, e.y, { air: drag.air, remove: drag.pan })
+    if (drag && !drag.moved && (!drag.pan || boxMode || towerMode)) void inspect(e.x, e.y, { air: drag.air, remove: drag.pan })
     drag = undefined
   }
   else if (drag) {
@@ -459,6 +495,10 @@ function step(dt: number) {
   if (gravity) {
     const fallen = fallBoxes(boxes, dt)
     if (fallen) applyBoxes(fallen)
+  }
+  if (tower) {
+    const next = stepTower(tower, dt)
+    if (next) applyTower(next)
   }
   if (playerKind && pose) {
     const player = getPlayer(playerKind)
