@@ -12,7 +12,7 @@ import { lensMask, type Lens } from '~/lib/lens'
 import type { Camera } from '~/lib/raycaster'
 import type { PlayerPose } from '~/players'
 import { createMainThreadTracer, createWorkerTracer, upscaleFrame, type Picked, type TracedFrame, type Tracer } from '~/lib/tracers'
-import type { ViewPick } from '~/composables/useAirPreview'
+import type { ViewPick } from '~/composables/useDropPreview'
 
 const props = defineProps<{
   env: Environment
@@ -245,7 +245,7 @@ const CLICK_SLOP = 4
 const inspected = ref<Picked & { x: number, y: number }>()
 const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
-const airPreview = useAirPreview(props.env, pickAt)
+const dropPreview = useDropPreview(props.env, pickAt)
 
 function setView(next: CameraView) {
   view.value = next
@@ -267,7 +267,7 @@ function stopMoving() {
 
 function onPointerMove(e: PointerEvent) {
   const rect = canvas.value!.getBoundingClientRect()
-  airPreview.move(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey, e.buttons !== 0)
+  dropPreview.move(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey, e.buttons !== 0)
   if (!drag) return
   const dx = e.clientX - drag.x
   const dy = e.clientY - drag.y
@@ -315,7 +315,7 @@ async function pickAt(x: number, y: number): Promise<ViewPick | undefined> {
 function onWheel(e: WheelEvent) {
   e.preventDefault()
   inspected.value = undefined
-  airPreview.leave()
+  dropPreview.leave()
   // A wheel has no "up" event: count it as moving until it has been still for a moment.
   moving = true
   clearTimeout(wheelTimer)
@@ -370,13 +370,13 @@ onBeforeUnmount(() => {
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
-      @pointerleave="airPreview.leave()"
+      @pointerleave="dropPreview.leave()"
       @wheel="onWheel"
       @contextmenu.prevent
     />
     <canvas v-if="!pixels" ref="glCanvas" class="glyphs" />
     <canvas v-if="!pixels" ref="gpuCanvas" class="glyphs" />
-    <BoxOutline v-if="airPreview.outline.value" :d="airPreview.outline.value" />
+    <BoxOutline v-if="dropPreview.outline.value" :d="dropPreview.outline.value" />
     <InspectLabel v-if="inspected" :picked="inspected" :x="inspected.x" :y="inspected.y" :left="inspected.x > width / 2" />
   </div>
 </template>

@@ -13,10 +13,10 @@ export interface ViewPick {
 }
 
 /**
- * While Shift is held over a view in the boxes mode, the outline of the box a Shift + click
- * would drop in the air there, as an SVG path. `pickAt` picks at a point of the view.
+ * Over a view in the boxes mode, the outline of the box a click would drop there, in the air
+ * while Shift is held, as an SVG path. `pickAt` picks at a point of the view.
  */
-export function useAirPreview(env: Environment, pickAt: (x: number, y: number) => ViewPick | undefined | Promise<ViewPick | undefined>) {
+export function useDropPreview(env: Environment, pickAt: (x: number, y: number) => ViewPick | undefined | Promise<ViewPick | undefined>) {
   const boxMode = useBoxMode()
   const { boxes, preview } = useBoxes(env)
   const outline = shallowRef<string>()
@@ -28,7 +28,7 @@ export function useAirPreview(env: Environment, pickAt: (x: number, y: number) =
   let again = false
 
   async function update() {
-    if (!boxMode.value || !shift || dragging || !pointer) {
+    if (!boxMode.value || dragging || !pointer) {
       outline.value = undefined
       return
     }
@@ -44,8 +44,8 @@ export function useAirPreview(env: Environment, pickAt: (x: number, y: number) =
       return update()
     }
     const picked = view?.picked
-    outline.value = picked && picked.kind !== 'player' && shift && !dragging && boxMode.value
-      ? boxOutline(preview(picked, true), view.camera, view.width, view.height)
+    outline.value = picked && picked.kind !== 'player' && pointer && !dragging && boxMode.value
+      ? boxOutline(preview(picked, shift), view.camera, view.width, view.height)
       : undefined
   }
 

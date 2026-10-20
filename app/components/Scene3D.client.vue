@@ -7,7 +7,7 @@ import { createFrameMeter, type FramePerf } from '~/lib/frameMeter'
 import { createShaderAscii } from '~/lib/gpu/shaderAscii'
 import { backendName, createEnvironmentScene, createOrbitControls, getSharedRenderer } from '~/lib/three'
 import { createScenePicker, type Picked } from '~/lib/tracers'
-import type { ViewPick } from '~/composables/useAirPreview'
+import type { ViewPick } from '~/composables/useDropPreview'
 
 const props = defineProps<{
   env: Environment
@@ -43,7 +43,7 @@ const inspected = ref<Picked & { x: number, y: number }>()
 const picker = createScenePicker()
 const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
-const airPreview = useAirPreview(props.env, pickAt)
+const dropPreview = useDropPreview(props.env, pickAt)
 
 function onPointerDown(e: PointerEvent) {
   press = e.button === 0 || e.button === 2 ? { x: e.clientX, y: e.clientY } : undefined
@@ -55,7 +55,7 @@ function onPointerDown(e: PointerEvent) {
 
 function onPointerMove(e: PointerEvent) {
   const rect = container.value!.getBoundingClientRect()
-  airPreview.move(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey, e.buttons !== 0)
+  dropPreview.move(e.clientX - rect.left, e.clientY - rect.top, e.shiftKey, e.buttons !== 0)
   if (!drag || !following.value) return
   chaseCamera.orbit(e.clientX - drag.x, e.clientY - drag.y, container.value!.clientHeight)
   drag = { x: e.clientX, y: e.clientY }
@@ -100,7 +100,7 @@ function pickAt(x: number, y: number): ViewPick | undefined {
 
 function onWheel(e: WheelEvent) {
   inspected.value = undefined
-  airPreview.leave()
+  dropPreview.leave()
   if (!following.value) return
   e.preventDefault()
   chaseCamera.zoom(e.deltaY)
@@ -244,11 +244,11 @@ onBeforeUnmount(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
-    @pointerleave="airPreview.leave()"
+    @pointerleave="dropPreview.leave()"
     @wheel="onWheel"
     @contextmenu.prevent
   >
-    <BoxOutline v-if="airPreview.outline.value" :d="airPreview.outline.value" />
+    <BoxOutline v-if="dropPreview.outline.value" :d="dropPreview.outline.value" />
     <InspectLabel v-if="inspected" :picked="inspected" :x="inspected.x" :y="inspected.y" :left="inspected.x > container!.clientWidth / 2" />
   </div>
 </template>
