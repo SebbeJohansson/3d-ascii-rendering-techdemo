@@ -1,5 +1,6 @@
 import type { Environment } from '~/environments'
 import { boxOutline } from '~/lib/boxes'
+import { towerBase } from '~/lib/tower'
 import type { Camera } from '~/lib/raycaster'
 import type { Picked } from '~/lib/tracers'
 
@@ -14,11 +15,15 @@ export interface ViewPick {
 
 /**
  * Over a view in the boxes mode, the outline of the box a click would drop there, in the air
- * while Shift is held, as an SVG path. `pickAt` picks at a point of the view.
+ * while Shift is held, as an SVG path. In the tower mode, between games, the outline of the
+ * base a click would start a tower with. `pickAt` picks at a point of the view.
  */
 export function useDropPreview(env: Environment, pickAt: (x: number, y: number) => ViewPick | undefined | Promise<ViewPick | undefined>) {
   const boxMode = useBoxMode()
   const { boxes, preview } = useBoxes(env)
+  const towerMode = useTowerMode()
+  const { game } = useTower(env)
+  const active = () => boxMode.value || (towerMode.value && (!game.value || game.value.over))
   const outline = shallowRef<string>()
   let pointer: { x: number, y: number } | undefined
   let shift = false
@@ -28,7 +33,7 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
   let again = false
 
   async function update() {
-    if (!boxMode.value || dragging || !pointer) {
+    if (!active() || dragging || !pointer) {
       outline.value = undefined
       return
     }
@@ -44,9 +49,12 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
       return update()
     }
     const picked = view?.picked
-    outline.value = picked && picked.kind !== 'player' && pointer && !dragging && boxMode.value
-      ? boxOutline(preview(picked, shift), view.camera, view.width, view.height)
-      : undefined
+    if (!view || !picked || picked.kind === 'player' || !pointer || dragging || !active()) {
+      outline.value = undefined
+      return
+    }
+    const shown = boxMode.value ? preview(picked, shift) : towerBase(picked)
+    outline.value = boxOutline(shown, view.camera, view.width, view.height)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -63,7 +71,7 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
     window.removeEventListener('keyup', onKey)
   })
   // A drop changes what is there and rolls the next box.
-  watch([boxes, boxMode], update)
+  watch([boxes, boxMode, towerMode], update)
 
   return {
     outline,

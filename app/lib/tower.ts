@@ -53,12 +53,16 @@ function layerColor(layer: number) {
 const box = (fields: Pick<Primitive, 'x' | 'y' | 'z' | 'width' | 'depth' | 'height' | 'color' | 'label'>): Primitive =>
   ({ shape: 'box', roughness: 0.6, dropped: true, ...fields })
 
-/** Starts a tower with its base on a clicked spot. */
-export function startTower({ point: [x, y, z], normal, floor }: DropSpot): TowerGame {
-  // On top of what was clicked, or on the floor beside a wall.
+/** The base of a tower started on a clicked spot: on top of what was clicked, or on the floor beside a wall. */
+export function towerBase({ point: [x, y, z], normal, floor }: DropSpot): Primitive {
   const bottom = normal[1] >= 0.5 ? y : floor
-  const base = box({ x, y: bottom, z, width: BASE_SIDE, depth: BASE_SIDE, height: BASE_HEIGHT, color: layerColor(0), label: 'Tower base' })
-  return withSwing({ boxes: [{ box: base, floor: bottom, speed: 0, stuck: true }], top: 0, height: bottom + BASE_HEIGHT, score: 0, over: false, swing: 0 })
+  return box({ x, y: bottom, z, width: BASE_SIDE, depth: BASE_SIDE, height: BASE_HEIGHT, color: layerColor(0), label: 'Tower base' })
+}
+
+/** Starts a tower with its base on a clicked spot. */
+export function startTower(spot: DropSpot): TowerGame {
+  const base = towerBase(spot)
+  return withSwing({ boxes: [{ box: base, floor: base.y, speed: 0, stuck: true }], top: 0, height: base.y + BASE_HEIGHT, score: 0, over: false, swing: 0 })
 }
 
 /** Whether the box swings along x; z otherwise. */

@@ -114,7 +114,10 @@ function randomize() {
     </p>
     <template v-if="towerMode">
       <p class="score">
-        <template v-if="tower.game.value?.over">
+        <template v-if="!tower.game.value">
+          Click a spot to start a tower
+        </template>
+        <template v-else-if="tower.game.value.over">
           Missed! Tower of {{ tower.game.value.score }} · click to start a new one
         </template>
         <template v-else>
