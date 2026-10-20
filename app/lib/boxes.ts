@@ -14,7 +14,7 @@ const MIN_SIDE = 1
 const MAX_SIDE = 5
 /** Space left between a box and the wall it was dropped against. */
 const GAP = 0.01
-/** How far out from the face clicked a box dropped in the air appears. */
+/** How far above where a click would put it a box dropped in the air appears. */
 const AIR = 8
 /** m/s². */
 export const GRAVITY = 9.81
@@ -46,7 +46,7 @@ export interface DroppedBox {
  * A box of random size and color at a clicked spot: on top of a roof or box, under a
  * ceiling, or against a wall on the side that was clicked, its middle at the click's height.
  * With `stick`, it sticks there, and a box clicked gets the new one centered on its face.
- * With `air`, it appears out from the face clicked instead, stuck to nothing.
+ * With `air`, it appears AIR m above where it would go otherwise, stuck to nothing.
  */
 export function dropBox(spot: DropSpot, { boxes = [], stick = false, air = false }: { boxes?: readonly DroppedBox[], stick?: boolean, air?: boolean } = {}, rand = Math.random): DroppedBox {
   const side = () => Math.round(between(rand, MIN_SIDE, MAX_SIDE) * 2) / 2
@@ -77,13 +77,10 @@ export function dropBox(spot: DropSpot, { boxes = [], stick = false, air = false
     else z += Math.sign(nz) * (depth / 2 + GAP)
     y = Math.max(floor, y - height / 2)
   }
-  if (air) {
-    x += nx * AIR
-    y = Math.max(floor, y + ny * AIR)
-    z += nz * AIR
-  }
+  const rest = y
+  if (air) y += AIR
   const box: Primitive = { shape: 'box', x, y, z, width, depth, height, color, roughness: 0.7, label, dropped: true }
-  return { box, floor: Math.min(floor, y), speed: 0, stuck: (stick && !air) || undefined }
+  return { box, floor: Math.min(floor, rest), speed: 0, stuck: (stick && !air) || undefined }
 }
 
 const overlap = (a: Primitive, b: Primitive) =>
