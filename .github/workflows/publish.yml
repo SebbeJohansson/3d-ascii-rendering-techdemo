@@ -1,0 +1,51 @@
+name: Publish to npm
+
+# Publishes 3d-ascii when npm/package.json on main has a version npm doesn't have yet.
+# Authenticates with npm trusted publishing (OIDC): no token secret.
+
+on:
+  push:
+    branches: [main]
+    paths: [npm/package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - id: version
+        name: Check whether this version is on npm
+        run: |
+          version=$(node -p "require('./npm/package.json').version")
+          if npm view "3d-ascii@$version" version > /dev/null 2>&1; then
+            echo "3d-ascii $version is already on npm"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Yarn 4, the version pinned in package.json's packageManager.
+      - if: steps.version.outputs.publish == 'true'
+        run: corepack enable
+      - if: steps.version.outputs.publish == 'true'
+        run: yarn install --immutable
+      - if: steps.version.outputs.publish == 'true'
+        run: yarn build:cli
+      # Trusted publishing needs npm 11.5.1 or later.
+      - if: steps.version.outputs.publish == 'true'
+        run: npm install -g npm@^11.5.1
+      - if: steps.version.outputs.publish == 'true'
+        run: npm publish
+        working-directory: npm
