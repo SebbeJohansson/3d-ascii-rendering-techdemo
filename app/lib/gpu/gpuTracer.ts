@@ -214,9 +214,12 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
   }
 
   function setShapes(meshes: Mesh[]) {
+    const before = slot.scene?.mesh
     const summary = slot.setShapes(meshes)
     if (!summary || !buffers) return
-    uploadMeshes(slot.scene!)
+    // The same meshes moved: only their vertices and bounds change.
+    if (before && slot.scene!.mesh === before && mesh) writeMoved(buffers.meshF, before.bvh, before.normals, mesh)
+    else uploadMeshes(slot.scene!)
     onScene(summary)
   }
 

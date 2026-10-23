@@ -12,7 +12,7 @@
  */
 import type { EnvironmentScene, Mesh, Primitive } from '../environments/types'
 import { linearRgb } from './color'
-import type { DropSpot } from './boxes'
+import { GRAVITY, type DropSpot } from './boxes'
 import type { Vec3 } from './math'
 import type { Camera } from './raycaster'
 import type { SdfShape } from './sdf'
@@ -60,10 +60,19 @@ export interface Drawing {
   height: number
 }
 
+/** What a spun or extruded shape can fall to with gravity on (see fallShapes()). */
+interface Falling {
+  /** Height of what is below it. */
+  floor: number
+  /** Downward speed while falling, m/s. */
+  speed?: number
+}
+
 export type DrawnShape =
-  | { kind: 'spin', x: number, y: number, z: number, size: number, profile: [number, number][], color: number }
+  | { kind: 'spin', x: number, y: number, z: number, size: number, profile: [number, number][], color: number } & Falling
   /** `forward` is the world direction, x and z, the top of the grid points to. */
-  | { kind: 'extrude', x: number, y: number, z: number, size: number, height: number, cells: number[], forward: [number, number], color: number }
+  | { kind: 'extrude', x: number, y: number, z: number, size: number, height: number, cells: number[], forward: [number, number], color: number } & Falling
+  /** Stuck to what it was clicked onto: blobs don't fall. */
   | { kind: 'blob', x: number, y: number, z: number, radius: number, color: number }
 
 export const COLORS = [0xe74c3c, 0xf39c12, 0xf1c40f, 0x2ecc71, 0x1abc9c, 0x3498db, 0x9b59b6, 0xecf0f1]
@@ -130,10 +139,12 @@ function cameraForward(camera: Camera): [number, number] {
 
 /**
  * The shape the drawing makes at a clicked spot, like a dropped box: on top of a roof, under a
- * ceiling, or on the floor against a wall on the side clicked; against the side of a mesh that
- * is a thing (the dragon), on what is under it, not on its own lower half. A blob sinks halfway into what
- * was clicked, so blobs clicked onto blobs melt into them. An extruded shape is turned so the
- * top of the grid points away from the camera, as drawn.
+ * ceiling, or against a wall on the side clicked with its middle at the click's height. Against
+ * the side of a mesh that is a thing (the dragon) it goes out past where the thing ends, so it
+ * can fall clear of it. With gravity on, shapes under a ceiling or beside a wall fall from
+ * there (see fallShapes()). A blob sinks halfway into what was clicked, so blobs clicked onto
+ * blobs melt into them. An extruded shape is turned so the top of the grid points away from
+ * the camera, as drawn.
  */
 export function placeShape(tool: DrawTool, drawing: Drawing, spot: DropSpot, camera: Camera, color: number): DrawnShape | undefined {
   if (!canPlace(tool, drawing)) return
@@ -148,19 +159,41 @@ export function placeShape(tool: DrawTool, drawing: Drawing, spot: DropSpot, cam
   let x = px
   let y = py
   let z = pz
-  if (ny <= -0.5) y -= height
+  let floor = py
+  if (ny <= -0.5) {
+    y -= height
+    floor = spot.floor
+  }
   else if (ny < 0.5) {
     const out = (spot.beside?.out ?? 0) + GAP
     if (Math.abs(nx) > Math.abs(nz)) x += Math.sign(nx) * (hx + out)
     else z += Math.sign(nz) * (hz + out)
-    y = spot.beside?.floor ?? spot.floor
+    floor = spot.beside?.floor ?? spot.floor
+    y = Math.max(floor, py - height / 2)
   }
   if (tool === 'spin') {
     // Standing on its lowest point, wherever on the pad it was drawn.
     const bottom = Math.min(...drawing.profile.map(([, h]) => h))
-    return { kind: 'spin', x, y, z, size: drawing.size, profile: drawing.profile.map(([r, h]) => [r, h - bottom]), color }
+    return { kind: 'spin', x, y, z, size: drawing.size, profile: drawing.profile.map(([r, h]) => [r, h - bottom]), color, floor }
   }
-  return { kind: 'extrude', x, y, z, size: drawing.size, height: drawing.height, cells: drawing.cells, forward, color }
+  return { kind: 'extrude', x, y, z, size: drawing.size, height: drawing.height, cells: drawing.cells, forward, color, floor }
+}
+
+/**
+ * Lets spun and extruded shapes fall onto their floors for `dt` seconds, like dropped boxes.
+ * Shapes that don't move stay the same objects. Returns the moved shapes, or undefined when
+ * all of them are resting.
+ */
+export function fallShapes(shapes: readonly DrawnShape[], dt: number): DrawnShape[] | undefined {
+  let moved = false
+  const next = shapes.map((s) => {
+    if (s.kind === 'blob' || s.y <= s.floor) return s
+    moved = true
+    const v = (s.speed ?? 0) + GRAVITY * dt
+    const dy = Math.min(s.y - s.floor, v * dt)
+    return { ...s, y: s.y - dy, speed: dy === s.y - s.floor ? 0 : v }
+  })
+  return moved ? next : undefined
 }
 
 /** The box a shape fills, for outlining where a click would place it. */
@@ -369,6 +402,9 @@ export function blobMesh(blobs: Extract<DrawnShape, { kind: 'blob' }>[], drawn: 
   }
 }
 
+/** The last blobs meshed, and their mesh: blobs don't move, so falling shapes don't mesh them again. */
+let blobCache: { blobs: DrawnShape[], drawn: number[], mesh: Mesh } | undefined
+
 /** The meshes of the drawn shapes: one per spun shape, then all blobs as one. */
 export function shapeMeshes(shapes: readonly DrawnShape[]): Mesh[] {
   const meshes: Mesh[] = []
@@ -381,7 +417,12 @@ export function shapeMeshes(shapes: readonly DrawnShape[]): Mesh[] {
       blobIndices.push(i)
     }
   })
-  if (blobs.length) meshes.push(blobMesh(blobs, blobIndices))
+  if (!blobs.length) return meshes
+  const same = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((v, i) => v === b[i])
+  if (!blobCache || !same(blobCache.blobs, blobs) || !same(blobCache.drawn, blobIndices)) {
+    blobCache = { blobs, drawn: blobIndices, mesh: blobMesh(blobs, blobIndices) }
+  }
+  meshes.push(blobCache.mesh)
   return meshes
 }
 

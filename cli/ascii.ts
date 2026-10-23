@@ -10,7 +10,7 @@ import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, 
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { dropBox, fallBoxes, removeBox, withBoxes, type DroppedBox } from '../app/lib/boxes'
 import { dropTower, startTower, stepTower, type TowerGame } from '../app/lib/tower'
-import { COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, DRAW_TOOLS, placeShape, removeShape, shapeBoxes, shapeMeshes, type DrawnShape, type DrawTool } from '../app/lib/shapes'
+import { COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, DRAW_TOOLS, fallShapes, placeShape, removeShape, shapeBoxes, shapeMeshes, type DrawnShape, type DrawTool } from '../app/lib/shapes'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -71,7 +71,7 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
 Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower game · 6 draw shapes · WASD/arrows move or look
-      Q/E zoom (dragon: down/up) · Space/Shift dragon up/down · G box gravity · F stick boxes to faces
+      Q/E zoom (dragon: down/up) · Space/Shift dragon up/down · G gravity for boxes and shapes · F stick boxes to faces
       X clear boxes or shapes · V next shape: spun vase, extruded heart, blobs
       Tab next environment · R characters/blocks · T day/night cycle · , and . an hour back/forward
       N new world · O outlines · B backgrounds · C colors · Esc quit
@@ -271,7 +271,7 @@ function statusBar(loading?: string) {
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
   const moves = drawMode
-    ? `draw: WASD look · Q/E zoom · click places a ${{ spin: 'spun vase', extrude: 'extruded heart', blobs: 'blob' }[drawTool]} · V next shape · right-click removes${shapes.length ? ' · X clear' : ''}`
+    ? `draw: WASD look · Q/E zoom · click places a ${{ spin: 'spun vase', extrude: 'extruded heart', blobs: 'blob' }[drawTool]} · V next shape · right-click removes · G gravity ${gravity ? 'on' : 'off'}${shapes.length ? ' · X clear' : ''}`
     : towerMode
     ? `tower: WASD look · Q/E zoom · ${!tower ? 'click a spot to build a tower there' : tower.over ? `missed! tower of ${tower.score} · click a spot for a new one` : `height ${tower.score} · click/Space drops`} · best ${towerBest}`
     : boxMode
@@ -406,7 +406,7 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === 'v' && drawMode) drawTool = DRAW_TOOLS[(DRAW_TOOLS.indexOf(drawTool) + 1) % DRAW_TOOLS.length]!
     else if (name === 'x' && drawMode) applyShapes([])
     else if (name === 'space' && towerMode && tower && !tower.over) applyTower(dropTower(tower))
-    else if (name === 'g' && boxMode) gravity = !gravity
+    else if (name === 'g' && (boxMode || drawMode)) gravity = !gravity
     else if (name === 'f' && boxMode) stick = !stick
     else if (name === 'x' && boxMode) applyBoxes([])
     else if (name === 'n') newWorld()
@@ -524,6 +524,8 @@ function step(dt: number) {
   if (gravity) {
     const fallen = fallBoxes(boxes, dt)
     if (fallen) applyBoxes(fallen)
+    const shapesFallen = fallShapes(shapes, dt)
+    if (shapesFallen) applyShapes(shapesFallen)
   }
   if (tower) {
     const next = stepTower(tower, dt)

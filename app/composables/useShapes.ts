@@ -1,7 +1,7 @@
 import type { Environment, Mesh, Primitive } from '~/environments'
 import type { DropSpot } from '~/lib/boxes'
 import type { Camera } from '~/lib/raycaster'
-import { canPlace, DRAW_TOOLS, COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, GRID, placeShape, removeShape, shapeBounds, shapeBoxes, shapeMeshes, type DrawnShape, type Drawing, type DrawTool } from '~/lib/shapes'
+import { canPlace, DRAW_TOOLS, COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, fallShapes, GRID, placeShape, removeShape, shapeBounds, shapeBoxes, shapeMeshes, type DrawnShape, type Drawing, type DrawTool } from '~/lib/shapes'
 
 /**
  * The draw mode: orbiting, where a click places the shape drawn in the panel. Picked in the
@@ -73,13 +73,17 @@ export function useDrawing() {
 const newRoll = () => Math.floor(Math.random() * COLORS.length)
 const NONE: DrawnShape[] = []
 
+/** The fall running per environment, so only one steps its shapes however many views share them. */
+const falling = new Map<string, number>()
+
 /**
- * Shapes drawn into an environment, shared by its views. They belong to one world: a new seed
- * or size starts without any.
+ * Shapes drawn into an environment, shared by its views. With the boxes' gravity on, shapes
+ * placed in the air fall. They belong to one world: a new seed or size starts without any.
  */
 export function useShapes(env: Environment) {
   const { seed, size } = useSceneSettings(env)
   const { tool, drawing, color } = useDrawing()
+  const gravity = useBoxGravity()
   /** The random color of the next shape, so a preview could show it. */
   const roll = useState('shape-roll', newRoll)
   const state = useState<{ world: string, items: DrawnShape[] }>(`shapes-${env.id}`, () => ({ world: '', items: NONE }))
@@ -89,6 +93,25 @@ export function useShapes(env: Environment) {
   // Raw, so the meshes can be posted to workers as they are.
   function set(next: DrawnShape[]) {
     state.value = { world: world.value, items: markRaw(next) }
+  }
+
+  /** Steps falling shapes every frame until all of them rest, or gravity is turned off. */
+  function fall() {
+    if (!gravity.value || falling.has(env.id)) return
+    let last = performance.now()
+    const tick = (now: number) => {
+      // Capped, so a frame after a stall (tab hidden) doesn't drop shapes through what is below.
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      const next = gravity.value ? fallShapes(items.value, dt) : undefined
+      if (!next) {
+        falling.delete(env.id)
+        return
+      }
+      set(next)
+      falling.set(env.id, requestAnimationFrame(tick))
+    }
+    falling.set(env.id, requestAnimationFrame(tick))
   }
 
   const shape = (spot: DropSpot, camera: Camera) =>
@@ -106,6 +129,7 @@ export function useShapes(env: Environment) {
       if (!next) return
       set([...items.value, next])
       roll.value = newRoll()
+      fall()
     },
     /** The box a click there would fill. */
     preview(spot: DropSpot, camera: Camera) {
@@ -116,6 +140,8 @@ export function useShapes(env: Environment) {
     remove({ drawn, point }: { drawn?: number, point: DropSpot['point'] }) {
       if (drawn !== undefined) set(removeShape(items.value, drawn, point))
     },
+    /** Lets shapes left in the air fall, after gravity is turned on. */
+    fall,
     undo() {
       set(items.value.slice(0, -1))
     },

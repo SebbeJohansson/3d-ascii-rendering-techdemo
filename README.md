@@ -53,7 +53,7 @@ The panel's `Draw` mode places shapes you draw in the panel; a click puts one wh
 - **Extrude**: paint cells on a 16 × 16 grid and they are pulled up into a solid: walls, letters, logos. The top of the grid points away from the camera, so it reads the way you see it from above. It is built from boxes, so the car bumps into it and dropped boxes land on it.
 - **Blobs**: each click adds a sphere; blobs that touch melt together, with the dragon's SDF smooth union and surface nets meshing (see `app/lib/sdf.ts`). Click a blob to grow the sculpture from it.
 
-Pick a color or random, set the size, and **Undo** or **Clear** what you placed. The drawing is saved across reloads; the shapes belong to one world like boxes. Spun shapes and blobs are triangle meshes added on top of the generated scene, so the ray tracers only rebuild their mesh BVH (see `app/lib/shapes.ts`). The terminal has it on `6`, with `V` switching between a spun vase, an extruded heart and blobs.
+Spun and extruded shapes go where a box would: on top of what you click, or against a wall with their middle at the click's height. Clicked on the dragon's side, they appear in the air just past where the dragon ends. **Gravity**, the same switch as the boxes', makes them fall from there onto what is below; blobs stay stuck where they were clicked. Pick a color or random, set the size, and **Undo** or **Clear** what you placed. The drawing is saved across reloads; the shapes belong to one world like boxes. Spun shapes and blobs are triangle meshes added on top of the generated scene, so the ray tracers only rebuild their mesh BVH (see `app/lib/shapes.ts`). The terminal has it on `6`, with `V` switching between a spun vase, an extruded heart and blobs.
 
 ### Riding a dragon or a car
 

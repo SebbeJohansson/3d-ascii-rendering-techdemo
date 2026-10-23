@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const { tool, profile, cells, sizes, extrudeHeight, color, ready, resetProfile, resetCells } = useDrawing()
 const shapes = useShapes(props.env)
+const gravity = useBoxGravity()
 
 const TOOLS: { id: DrawTool, name: string }[] = [
   { id: 'spin', name: 'Spin' },
@@ -78,6 +79,10 @@ const TOOLS: { id: DrawTool, name: string }[] = [
       @click="color = i"
     />
   </div>
+  <label class="toggle">
+    <input v-model="gravity" type="checkbox">
+    Gravity
+  </label>
   <p v-if="!ready" class="keys">
     Draw something on the pad first.
   </p>
@@ -93,6 +98,14 @@ const TOOLS: { id: DrawTool, name: string }[] = [
   font-size: 12px;
   line-height: 1.5;
   color: #555;
+}
+
+.toggle {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
 }
 
 .links {

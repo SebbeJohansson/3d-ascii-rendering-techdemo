@@ -19,7 +19,12 @@ const boxMode = useBoxMode()
 const { count: boxCount, fall, clear: clearBoxes } = useBoxes(props.env)
 const gravity = useBoxGravity()
 const stick = useBoxStick()
-watch(gravity, on => on && fall())
+const shapes = useShapes(props.env)
+watch(gravity, (on) => {
+  if (!on) return
+  fall()
+  shapes.fall()
+})
 
 const towerMode = useTowerMode()
 const tower = useTower(props.env)

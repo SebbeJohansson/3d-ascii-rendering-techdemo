@@ -50,6 +50,8 @@ export interface RaycastScene {
     normals: Float32Array
     /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
     albedo: Float32Array
+    /** Each source mesh's indices, to tell whether new meshes are the same ones moved. */
+    sources: Uint32Array[]
   }
   /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
   player?: RaycastPlayer
@@ -210,11 +212,32 @@ export function setPrimitives(s: RaycastScene, primitives: Primitive[]) {
   s.maxHeight = s.mesh ? Math.max(maxHeight, s.mesh.bvh.bounds[4]!) : maxHeight
 }
 
+/** Whether two index arrays are equal, value by value. */
+function sameIndices(a: Uint32Array, b: Uint32Array) {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 /**
- * Replaces the scene's meshes, merged into one so one BVH covers them all. Rebuilding the BVH
- * takes a while for big meshes, so do it when meshes come or go, not when they move.
+ * Replaces the scene's meshes, merged into one so one BVH covers them all. Meshes that are
+ * the same as before, only moved (a falling shape), are copied in and the BVH refitted, which
+ * is much cheaper than building it again. Returns whether it was built again.
  */
 export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
+  const old = s.mesh
+  if (old && old.sources.length === meshes.length && meshes.every((m, i) => sameIndices(m.indices, old.sources[i]!))) {
+    let offset = 0
+    for (const m of meshes) {
+      old.bvh.positions.set(m.positions, offset)
+      old.normals.set(m.normals, offset)
+      offset += m.positions.length
+    }
+    refitBvh(old.bvh)
+    s.maxHeight = Math.max(s.primitivesHeight, old.bvh.bounds[4]!)
+    return false
+  }
   s.mesh = undefined
   if (meshes.length) {
     const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
@@ -233,9 +256,10 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
       v += m.positions.length / 3
       t += m.indices.length
     }
-    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo }
+    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo, sources: meshes.map(m => m.indices) }
   }
   s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
+  return true
 }
 
 /**
