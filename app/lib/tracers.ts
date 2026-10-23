@@ -5,11 +5,12 @@
  */
 import { getEnvironment } from '../environments'
 import type { WorkerRequest, WorkerResponse } from '../workers/raytrace.worker'
-import type { Environment, EnvironmentScene, Primitive } from '../environments/types'
+import type { Environment, EnvironmentScene, Mesh, Primitive } from '../environments/types'
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
 import { withBoxes, type DropSpot } from './boxes'
-import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { withShapes } from './shapes'
+import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setMeshes, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -35,6 +36,8 @@ export interface Picked extends DropSpot {
   label: string
   /** From the camera, in world units (meters). */
   distance: number
+  /** The drawn shape hit (see lib/shapes.ts), as its index among them. */
+  drawn?: number
 }
 
 export interface TracerEvents {
@@ -51,6 +54,8 @@ export interface Tracer {
   setScene: (envId: string, seed: number, size: number) => void
   /** Replaces the boxes dropped into the scene, now and in scenes set after. */
   setBoxes: (boxes: Primitive[]) => void
+  /** Replaces the meshes of shapes drawn into the scene, now and in scenes set after. */
+  setShapes: (meshes: Mesh[]) => void
   /** Spawns a player (or removes it, with null). Its colors come from the seed. */
   setPlayer: (kind: PlayerKind | null, seed: number) => void
   /**
@@ -87,16 +92,17 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
   if (!hit) return null
   const env = getEnvironment(envId)
   let label: string | undefined
+  let drawn: number | undefined
   if (hit.kind === 'ground') label = env.groundLabel ?? (env.reflectance ? 'Sea' : 'Ground')
   else if (hit.kind === 'player') label = player
-  else if (hit.kind === 'primitive') label = generated.primitives[hit.index]?.label
+  else if (hit.kind === 'primitive') ({ label, drawn } = generated.primitives[hit.index] ?? {})
   else if (hit.kind === 'mesh') {
     // The meshes were merged in order: find the one this triangle came from.
     let first = 0
     for (const mesh of generated.meshes ?? []) {
       first += mesh.indices.length / 3
       if (hit.triangle < first) {
-        label = mesh.label
+        ;({ label, drawn } = mesh)
         break
       }
     }
@@ -108,16 +114,19 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
   const box = hit.kind === 'primitive' && generated.primitives[hit.index]?.dropped
     ? generated.primitives.slice(0, hit.index).filter(p => p.dropped).length
     : undefined
-  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor, box }
+  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor, box, drawn }
 }
 
 /**
- * An environment's generated scene and the ray tracer's copy of it, with dropped boxes on
- * top. Changing the boxes only rebuilds the primitives, not the environment.
+ * An environment's generated scene and the ray tracer's copy of it, with dropped boxes and
+ * drawn shapes on top. Changing the boxes only rebuilds the primitives, and changing the
+ * shapes only the meshes, not the environment.
  */
 export function createSceneSlot() {
   let base: EnvironmentScene | undefined
   let boxes: Primitive[] = []
+  let shapes: Mesh[] = []
+  const compose = (scene: EnvironmentScene) => withShapes(withBoxes(scene, boxes), shapes)
   const slot = {
     envId: '',
     generated: undefined as EnvironmentScene | undefined,
@@ -126,7 +135,7 @@ export function createSceneSlot() {
     set(envId: string, seed: number, size: number) {
       const env = getEnvironment(envId)
       base = env.generate(seed, size)
-      slot.generated = withBoxes(base, boxes)
+      slot.generated = compose(base)
       slot.scene = buildRaycastScene(env, slot.generated)
       slot.envId = envId
       return slot.generated.summary
@@ -135,8 +144,16 @@ export function createSceneSlot() {
     setBoxes(next: Primitive[]) {
       boxes = next
       if (!base || !slot.scene) return
-      slot.generated = withBoxes(base, boxes)
+      slot.generated = compose(base)
       setPrimitives(slot.scene, slot.generated.primitives)
+      return slot.generated.summary
+    },
+    /** Returns the new summary, or undefined while there is no scene yet. */
+    setShapes(next: Mesh[]) {
+      shapes = next
+      if (!base || !slot.scene) return
+      slot.generated = compose(base)
+      setMeshes(slot.scene, slot.generated.meshes ?? [])
       return slot.generated.summary
     },
   }
@@ -230,6 +247,10 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
     },
     setBoxes(boxes) {
       const summary = slot.setBoxes(boxes)
+      if (summary) onScene(summary)
+    },
+    setShapes(meshes) {
+      const summary = slot.setShapes(meshes)
       if (summary) onScene(summary)
     },
     setPlayer(kind, seed) {
@@ -329,6 +350,9 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     },
     setBoxes(boxes) {
       for (const w of workers) post(w, { type: 'boxes', boxes })
+    },
+    setShapes(meshes) {
+      for (const w of workers) post(w, { type: 'shapes', meshes })
     },
     setPlayer(kind, seed) {
       for (const w of workers) post(w, { type: 'player', kind, seed })

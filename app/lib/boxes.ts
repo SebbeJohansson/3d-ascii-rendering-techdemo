@@ -162,12 +162,16 @@ export function boxOutline({ x, y, z, width: w, depth: d, height: h }: Primitive
   }).join('')
 }
 
-/** The generated scene with dropped boxes added, and counted in its summary. */
+/**
+ * The generated scene with dropped boxes added, and counted in its summary. Boxes of drawn
+ * shapes come along uncounted: withShapes() (lib/shapes.ts) counts the shapes.
+ */
 export function withBoxes(scene: EnvironmentScene, boxes: readonly Primitive[]): EnvironmentScene {
   if (!boxes.length) return scene
+  const count = boxes.filter(b => b.drawn === undefined).length
   return {
     ...scene,
     primitives: [...scene.primitives, ...boxes],
-    summary: `${scene.summary} · ${boxes.length} ${boxes.length === 1 ? 'box' : 'boxes'}`,
+    summary: count ? `${scene.summary} · ${count} ${count === 1 ? 'box' : 'boxes'}` : scene.summary,
   }
 }

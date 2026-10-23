@@ -12,7 +12,7 @@
  *   needs, and reads the frame back otherwise, e.g. for the lens, which the CPU draws.
  */
 import { getEnvironment } from '../../environments'
-import type { Primitive } from '../../environments/types'
+import type { Mesh, Primitive } from '../../environments/types'
 import { NOON } from '../../environments/lighting'
 import type { Bvh } from '../bvh'
 import { linearToSrgbByte } from '../color'
@@ -194,13 +194,11 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     }
     const summary = slot.set(envId, seed, size)
     const scene = slot.scene!
-    mesh = scene.mesh && packBvh(scene.mesh)
 
     buffers ??= {} as NonNullable<typeof buffers>
     if (!buffers.params) buffers.params = device.createBuffer({ size: PARAMS_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     uploadPrimitives(scene)
-    replace('meshF', storage(mesh?.floats ?? new Float32Array(4)))
-    replace('meshU', storage(mesh?.uints ?? new Uint32Array(4)))
+    uploadMeshes(scene)
     if (!buffers.playerF) {
       replace('playerF', storage(new Float32Array(4)))
       replace('playerU', storage(new Uint32Array(4)))
@@ -213,6 +211,20 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     if (!summary || !buffers) return
     uploadPrimitives(slot.scene!)
     onScene(summary)
+  }
+
+  function setShapes(meshes: Mesh[]) {
+    const summary = slot.setShapes(meshes)
+    if (!summary || !buffers) return
+    uploadMeshes(slot.scene!)
+    onScene(summary)
+  }
+
+  /** Uploads the merged mesh's BVH. */
+  function uploadMeshes(scene: RaycastScene) {
+    mesh = scene.mesh && packBvh(scene.mesh)
+    replace('meshF', storage(mesh?.floats ?? new Float32Array(4)))
+    replace('meshU', storage(mesh?.uints ?? new Uint32Array(4)))
   }
 
   /** Uploads the primitives and the grid that finds them. */
@@ -468,6 +480,7 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     },
     setScene,
     setBoxes,
+    setShapes,
     setPlayer: player.set,
     async pick(camera, u, v) {
       const { scene, generated } = slot

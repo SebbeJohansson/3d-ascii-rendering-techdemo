@@ -16,14 +16,18 @@ export interface ViewPick {
 /**
  * Over a view in the boxes mode, the outline of the box a click would drop there, in the air
  * while Shift is held, as an SVG path. In the tower mode, between games, the outline of the
- * base a click would start a tower with. `pickAt` picks at a point of the view.
+ * base a click would start a tower with; in the draw mode, of the box the drawn shape would
+ * fill. `pickAt` picks at a point of the view.
  */
 export function useDropPreview(env: Environment, pickAt: (x: number, y: number) => ViewPick | undefined | Promise<ViewPick | undefined>) {
   const boxMode = useBoxMode()
   const { boxes, preview } = useBoxes(env)
   const towerMode = useTowerMode()
   const { game } = useTower(env)
-  const active = () => boxMode.value || (towerMode.value && (!game.value || game.value.over))
+  const drawMode = useDrawMode()
+  const { drawing, ready } = useDrawing()
+  const shapes = useShapes(env)
+  const active = () => boxMode.value || (towerMode.value && (!game.value || game.value.over)) || (drawMode.value && ready.value)
   const outline = shallowRef<string>()
   let pointer: { x: number, y: number } | undefined
   let shift = false
@@ -53,8 +57,8 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
       outline.value = undefined
       return
     }
-    const shown = boxMode.value ? preview(picked, shift) : towerBase(picked)
-    outline.value = boxOutline(shown, view.camera, view.width, view.height)
+    const shown = boxMode.value ? preview(picked, shift) : drawMode.value ? shapes.preview(picked, view.camera) : towerBase(picked)
+    outline.value = shown && boxOutline(shown, view.camera, view.width, view.height)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -71,7 +75,7 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
     window.removeEventListener('keyup', onKey)
   })
   // A drop changes what is there and rolls the next box.
-  watch([boxes, boxMode, towerMode], update)
+  watch([boxes, boxMode, towerMode, drawMode, shapes.meshes, drawing], update)
 
   return {
     outline,

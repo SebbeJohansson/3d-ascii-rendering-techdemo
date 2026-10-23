@@ -143,28 +143,6 @@ export function setLighting(s: RaycastScene, lighting: Lighting) {
 }
 
 export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene): RaycastScene {
-  // Merge every mesh into one, so one BVH covers them all.
-  let mesh: RaycastScene['mesh']
-  if (meshes.length) {
-    const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
-    const positions = new Float32Array(vertexCount * 3)
-    const normals = new Float32Array(vertexCount * 3)
-    const albedo = new Float32Array(vertexCount * 3)
-    const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0))
-    let v = 0
-    let t = 0
-    for (const m of meshes) {
-      positions.set(m.positions, v * 3)
-      normals.set(m.normals, v * 3)
-      const keep = 1 - (m.metalness ?? 0)
-      for (let i = 0; i < m.colors.length; i++) albedo[v * 3 + i] = m.colors[i]! * keep
-      for (let i = 0; i < m.indices.length; i++) indices[t + i] = m.indices[i]! + v
-      v += m.positions.length / 3
-      t += m.indices.length
-    }
-    mesh = { bvh: buildBvh(positions, indices), normals, albedo }
-  }
-
   const scene: RaycastScene = {
     bounds: new Float32Array(0),
     shapes: new Uint8Array(0),
@@ -184,9 +162,9 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     cellItems: new Uint32Array(0),
     stamp: new Uint32Array(0),
     rayId: 0,
-    mesh,
     occlusion: false,
   }
+  setMeshes(scene, meshes)
   setPrimitives(scene, primitives)
   setLighting(scene, lightingAt(NOON, env.sky))
   return scene
@@ -230,6 +208,34 @@ export function setPrimitives(s: RaycastScene, primitives: Primitive[]) {
 
   Object.assign(s, { bounds, shapes, colors, windows, cellStart, cellItems, stamp: new Uint32Array(count), primitivesHeight: maxHeight })
   s.maxHeight = s.mesh ? Math.max(maxHeight, s.mesh.bvh.bounds[4]!) : maxHeight
+}
+
+/**
+ * Replaces the scene's meshes, merged into one so one BVH covers them all. Rebuilding the BVH
+ * takes a while for big meshes, so do it when meshes come or go, not when they move.
+ */
+export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
+  s.mesh = undefined
+  if (meshes.length) {
+    const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
+    const positions = new Float32Array(vertexCount * 3)
+    const normals = new Float32Array(vertexCount * 3)
+    const albedo = new Float32Array(vertexCount * 3)
+    const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0))
+    let v = 0
+    let t = 0
+    for (const m of meshes) {
+      positions.set(m.positions, v * 3)
+      normals.set(m.normals, v * 3)
+      const keep = 1 - (m.metalness ?? 0)
+      for (let i = 0; i < m.colors.length; i++) albedo[v * 3 + i] = m.colors[i]! * keep
+      for (let i = 0; i < m.indices.length; i++) indices[t + i] = m.indices[i]! + v
+      v += m.positions.length / 3
+      t += m.indices.length
+    }
+    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo }
+  }
+  s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
 }
 
 /**

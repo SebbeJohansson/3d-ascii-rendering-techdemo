@@ -45,6 +45,16 @@ The panel's `Boxes` mode orbits like `Orbit`, but a click drops a box of random 
 
 The panel's `Tower` mode is a game. Click a spot to build a tower there: a base goes down and a box starts swinging back and forth above it, along one axis and then the other. Click or press `Space` to drop it. It falls straight down; the part over the box below stays, the overhang is cut off and falls away, and the next box is only as big as what stayed. A drop within 25 cm of the box below lands exactly on it. Miss the tower and the game is over; the score is how many boxes you stacked, with your best kept in the panel. The swing speeds up with every box. The game is a pure function of time and drops (see `app/lib/tower.ts`), and its boxes are drawn and collided with like dropped ones. The terminal has it on `5`.
 
+### Drawing shapes
+
+The panel's `Draw` mode places shapes you draw in the panel; a click puts one where it lands, like a box, with an outline of the space it will fill, and a right click takes one out. Three tools:
+
+- **Spin**: drag on the pad to draw half an outline; it spins around the dashed axis into a vase, bottle or tower. Gentle bends come out smooth and sharp corners stay sharp.
+- **Extrude**: paint cells on a 16 × 16 grid and they are pulled up into a solid: walls, letters, logos. The top of the grid points away from the camera, so it reads the way you see it from above. It is built from boxes, so the car bumps into it and dropped boxes land on it.
+- **Blobs**: each click adds a sphere; blobs that touch melt together, with the dragon's SDF smooth union and surface nets meshing (see `app/lib/sdf.ts`). Click a blob to grow the sculpture from it.
+
+Pick a color or random, set the size, and **Undo** or **Clear** what you placed. The drawing is saved across reloads; the shapes belong to one world like boxes. Spun shapes and blobs are triangle meshes added on top of the generated scene, so the ray tracers only rebuild their mesh BVH (see `app/lib/shapes.ts`). The terminal has it on `6`, with `V` switching between a spun vase, an extruded heart and blobs.
+
 ### Riding a dragon or a car
 
 The panel's `Dragon` and `Car` buttons spawn one into the current environment, with a third-person camera behind it. `W` `S` set speed and `A` `D` turn; the dragon also climbs with `Space` and dives with `Shift`. Drag to look around it and scroll to zoom; once it moves and the mouse is left alone for 1.5 seconds, the camera eases back behind it. It bumps into buildings, trees and rocks, drives up onto curbs, and the dragon can land on roofs. The dragon starts in the air, above the tallest building or tree. `Orbit` removes it. It works in all three views, and in `/split` both halves follow the same player.
@@ -59,7 +69,7 @@ yarn ascii forest --seed 42
 yarn ascii --help       # every option
 ```
 
-`1` orbits, `2` rides the dragon and `3` the car. `4` is the boxes mode: a click drops a box, `G` turns gravity on and off and `X` clears them. `5` is the tower game: a click starts a tower, then a click or `Space` drops the swinging box. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser and a click names what is under it, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
+`1` orbits, `2` rides the dragon and `3` the car. `4` is the boxes mode: a click drops a box, `G` turns gravity on and off and `X` clears them. `5` is the tower game: a click starts a tower, then a click or `Space` drops the swinging box. `6` draws shapes: a click places a spun vase, an extruded heart or a blob, `V` switches between them and a right click takes one out. WASD or the arrows move (or look around while orbiting), the mouse drags and zooms like in the browser and a click names what is under it, `Tab` switches to the next environment, `R` switches between characters and blocks, `T` starts or stops the day and night cycle, `,` and `.` move the time an hour, `N` makes a new world and `Esc` quits. Blocks (`--blocks`) split every cell into two colored pixels with `▀`, for twice the detail but no characters. For more cells in either mode, make the terminal's font smaller. It needs a terminal with 24-bit color for the best look (it falls back to 256 colors).
 
 To publish a new version to npm, follow the versioning and release steps in `AGENTS.md`. The build bundles `cli/` and the code it uses from `app/` into two files with no dependencies.
 

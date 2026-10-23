@@ -28,6 +28,8 @@ export interface Primitive {
   label?: string
   /** A box dropped in by a click (see lib/boxes.ts), not part of the environment. */
   dropped?: boolean
+  /** Part of a shape drawn in the panel (see lib/shapes.ts): its index among them. */
+  drawn?: number
 }
 
 /**
@@ -48,6 +50,8 @@ export interface Mesh {
   metalness?: number
   /** What it is, shown when it is clicked. */
   label?: string
+  /** A shape drawn in the panel (see lib/shapes.ts): its index among them. */
+  drawn?: number
 }
 
 export interface EnvironmentScene {

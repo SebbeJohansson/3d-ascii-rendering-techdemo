@@ -23,15 +23,18 @@ watch(gravity, on => on && fall())
 
 const towerMode = useTowerMode()
 const tower = useTower(props.env)
+const drawMode = useDrawMode()
 
 /**
  * Orbit, the boxes mode (orbit where a click drops a box), the tower game (orbit where a
- * click drops the swinging box) or a player: one at a time.
+ * click drops the swinging box), the draw mode (orbit where a click places the shape drawn
+ * in the panel) or a player: one at a time.
  */
-function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower') {
+function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower' | 'draw') {
   playerKind.value = kind
   boxMode.value = mode === 'boxes'
   towerMode.value = mode === 'tower'
+  drawMode.value = mode === 'draw'
 }
 /** Space drops the swinging box; kept from scrolling or pressing a focused button. */
 function onKey(e: KeyboardEvent) {
@@ -81,7 +84,7 @@ function randomize() {
       </NuxtLink>
     </nav>
     <nav>
-      <button type="button" :class="{ active: !playerKind && !boxMode && !towerMode }" @click="play(null)">
+      <button type="button" :class="{ active: !playerKind && !boxMode && !towerMode && !drawMode }" @click="play(null)">
         Orbit
       </button>
       <button type="button" :class="{ active: boxMode }" @click="play(null, 'boxes')">
@@ -89,6 +92,9 @@ function randomize() {
       </button>
       <button type="button" :class="{ active: towerMode }" @click="play(null, 'tower')">
         Tower
+      </button>
+      <button type="button" :class="{ active: drawMode }" @click="play(null, 'draw')">
+        Draw
       </button>
       <button v-for="p in PLAYERS" :key="p.id" type="button" :class="{ active: playerKind === p.id }" @click="play(p.id)">
         {{ p.name }}
@@ -104,6 +110,9 @@ function randomize() {
     <p v-else class="keys">
       drag to orbit · right-drag or <kbd>Shift</kbd> + drag to pan · scroll to zoom · <template v-if="boxMode">
         {{ stick ? 'click a face to stick a box onto it' : 'click to drop a box onto what\'s there' }} · <kbd>Shift</kbd> + click drops it in the air · right-click removes one
+      </template>
+      <template v-else-if="drawMode">
+        click to place the shape · right-click removes one
       </template>
       <template v-else-if="towerMode">
         {{ tower.game.value && !tower.game.value.over ? 'click or' : 'click a spot to build a tower there ·' }} <kbd>Space</kbd> drops the box
@@ -129,6 +138,7 @@ function randomize() {
         Clear tower
       </button>
     </template>
+    <DrawSettings v-if="drawMode" :env="env" />
     <template v-if="boxMode">
       <label class="toggle">
         <input v-model="gravity" type="checkbox">

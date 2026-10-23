@@ -7,6 +7,7 @@ import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '.
 import { HEMI_GROUND_COLOR, HEMI_INTENSITY, HEMI_SKY_COLOR, lightingAt, NOON, SUN_COLOR, SUN_INTENSITY, SUN_POSITION } from '../environments/lighting'
 import { CAMERA_FOV, MAX_DISTANCE, MAX_POLAR_ANGLE, MIN_DISTANCE, type CameraView } from './camera'
 import { withBoxes } from './boxes'
+import { withShapes } from './shapes'
 import type { Vec3 } from './math'
 import { FLOOR_HEIGHT, GLASS_X, GLASS_Y, HASH_COLUMN, HASH_FACE, HASH_ROW, LIT_SHARE, WINDOW_COLOR, WINDOW_GLOW, WINDOW_SPACING } from './windows'
 
@@ -221,6 +222,23 @@ export function createEnvironmentScene() {
     return shown()?.summary
   }
 
+  /** Meshes of drawn shapes, kept outside `content` like the boxes. */
+  let shapes: Mesh[] = []
+  let shapeMeshes: THREE.Mesh[] = []
+
+  /** Replaces the drawn shapes' meshes. Returns the summary counting them, once something is built. */
+  function setShapes(next: Mesh[]) {
+    shapes = next
+    withDropped = undefined
+    for (const mesh of shapeMeshes) {
+      scene.remove(mesh)
+      disposeMesh(mesh)
+    }
+    shapeMeshes = shapes.map(createMesh)
+    if (shapeMeshes.length) scene.add(...shapeMeshes)
+    return shown()?.summary
+  }
+
   /** Lights the scene for the time of day (see lighting.ts). */
   function applyLighting() {
     if (!current) return
@@ -291,15 +309,16 @@ export function createEnvironmentScene() {
   function dispose() {
     clear()
     setBoxes([])
+    setShapes([])
     setPlayer(null, 0)
   }
 
-  /** The generated scene on show with the dropped boxes, which animate() keeps posed. */
+  /** The generated scene on show with the dropped boxes and drawn shapes, which animate() keeps posed. */
   function shown() {
-    return current && (withDropped ??= withBoxes(current.scene, boxes))
+    return current && (withDropped ??= withShapes(withBoxes(current.scene, boxes), shapes))
   }
 
-  return { scene, camera, build, setBoxes, animate, setPlayer, placePlayer, setTimeOfDay, generated: shown, dispose }
+  return { scene, camera, build, setBoxes, setShapes, animate, setPlayer, placePlayer, setTimeOfDay, generated: shown, dispose }
 }
 
 export function backendName(renderer: THREE.WebGPURenderer) {

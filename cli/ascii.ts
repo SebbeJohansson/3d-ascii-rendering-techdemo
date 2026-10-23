@@ -10,6 +10,7 @@ import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, 
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { dropBox, fallBoxes, removeBox, withBoxes, type DroppedBox } from '../app/lib/boxes'
 import { dropTower, startTower, stepTower, type TowerGame } from '../app/lib/tower'
+import { COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, DRAW_TOOLS, placeShape, removeShape, shapeBoxes, shapeMeshes, type DrawnShape, type DrawTool } from '../app/lib/shapes'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -69,13 +70,15 @@ const USAGE = `Usage: ${COMMAND} [${ENVIRONMENTS.map(e => e.id).join('|')}] [opt
   --benchmark       fly a ${BENCH_SECONDS} s camera path, then print fps and where frame time went
   --log-input FILE  write every key and mouse sequence, and the camera after it, to FILE
 
-Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower game · WASD/arrows move or look · Q/E zoom (dragon: down/up)
-      Space/Shift dragon up/down · G box gravity · F stick boxes to faces · X clear boxes
+Keys: 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower game · 6 draw shapes · WASD/arrows move or look
+      Q/E zoom (dragon: down/up) · Space/Shift dragon up/down · G box gravity · F stick boxes to faces
+      X clear boxes or shapes · V next shape: spun vase, extruded heart, blobs
       Tab next environment · R characters/blocks · T day/night cycle · , and . an hour back/forward
       N new world · O outlines · B backgrounds · C colors · Esc quit
 Mouse: drag to look, right-drag to pan, wheel to zoom, click to name what's there
        (in boxes mode: to drop a box there, Shift/Alt-click in the air, right-click removes one;
-       in the tower game: to start a tower there, then click or Space drops the swinging box).`
+       in the tower game: to start a tower there, then click or Space drops the swinging box;
+       in draw mode: to place the shape there, right-click removes one).`
 
 if (values.help) {
   console.log(USAGE)
@@ -119,6 +122,10 @@ let towerMode = false
 let tower: TowerGame | undefined
 /** The highest tower stacked since starting. */
 let towerBest = 0
+/** Orbiting, where a click places a shape: the browser's starting drawings, spun, extruded or as blobs. */
+let drawMode = false
+let drawTool: DrawTool = 'spin'
+let shapes: DrawnShape[] = []
 let view: CameraView = structuredClone(env.camera ?? DEFAULT_VIEW)
 let playerKind: PlayerKind | null = null
 let pose: PlayerPose | undefined
@@ -263,14 +270,16 @@ function statusBar(loading?: string) {
 
 /** The keys that do something right now, for the bar at the bottom. */
 function keyBar() {
-  const moves = towerMode
+  const moves = drawMode
+    ? `draw: WASD look · Q/E zoom · click places a ${{ spin: 'spun vase', extrude: 'extruded heart', blobs: 'blob' }[drawTool]} · V next shape · right-click removes${shapes.length ? ' · X clear' : ''}`
+    : towerMode
     ? `tower: WASD look · Q/E zoom · ${!tower ? 'click a spot to build a tower there' : tower.over ? `missed! tower of ${tower.score} · click a spot for a new one` : `height ${tower.score} · click/Space drops`} · best ${towerBest}`
     : boxMode
     ? `boxes: WASD look · Q/E zoom · click drops a box · Alt-click in the air · right-click removes · G gravity ${gravity ? 'on' : 'off'} · F stick ${stick ? 'on' : 'off'}${boxes.length ? ' · X clear' : ''}`
     : !playerKind
         ? 'orbit: WASD look · Q/E zoom · click names it'
         : `${getPlayer(playerKind).name.toLowerCase()}: WASD move${getPlayer(playerKind).flies ? ' · Space/E up · Shift/Q down' : ''} · click names it`
-  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
+  return ` ${moves} │ 1 orbit · 2 dragon · 3 car · 4 boxes · 5 tower · 6 draw · Tab scene · ${colorDepth === 'none' ? '' : `R ${resolution === 'blocks' ? 'characters' : 'blocks'} · `}C colors · T cycle · ,. hour · N new · Esc quit`
 }
 
 function showBars(loading?: string) {
@@ -297,18 +306,25 @@ function applyTower(next: TowerGame | undefined) {
   showBoxes()
 }
 
-/** Hands the dropped boxes and the tower game's to the tracer and to the player's collisions. */
+function applyShapes(next: DrawnShape[]) {
+  shapes = next
+  tracer.setShapes(shapeMeshes(shapes))
+  showBoxes()
+}
+
+/** Hands the dropped boxes, the tower game's and extruded shapes' to the tracer and to the player's collisions. */
 function showBoxes() {
-  const all = [...boxes, ...(tower?.boxes ?? [])].map(b => b.box)
+  const all = [...boxes.map(b => b.box), ...(tower?.boxes ?? []).map(b => b.box), ...shapeBoxes(shapes)]
   world = withBoxes(generated, all)
   tracer.setBoxes(all)
   dirty = true
 }
 
-/** Orbit, the boxes mode, the tower game or a player: one at a time. */
-function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower') {
+/** Orbit, the boxes mode, the tower game, the draw mode or a player: one at a time. */
+function play(kind: PlayerKind | null, mode?: 'boxes' | 'tower' | 'draw') {
   boxMode = mode === 'boxes'
   towerMode = mode === 'tower'
+  drawMode = mode === 'draw'
   spawn(kind)
 }
 
@@ -335,9 +351,10 @@ function spawn(kind: PlayerKind | null) {
 /** Builds the current environment for `seed` and puts the player somewhere it fits. */
 function rebuild() {
   generated = env.generate(seed, size)
-  // A new world starts without boxes.
+  // A new world starts without boxes or shapes.
   tower = undefined
-  applyBoxes([])
+  boxes = []
+  applyShapes([])
   tracer.setScene(env.id, seed, size)
   // A new color for the player too, spawned fresh in the new world.
   const kind = playerKind
@@ -385,6 +402,9 @@ const input = createInput(process.stdin, process.stdout, {
     else if (name === '3') play('car')
     else if (name === '4') play(null, 'boxes')
     else if (name === '5') play(null, 'tower')
+    else if (name === '6') play(null, 'draw')
+    else if (name === 'v' && drawMode) drawTool = DRAW_TOOLS[(DRAW_TOOLS.indexOf(drawTool) + 1) % DRAW_TOOLS.length]!
+    else if (name === 'x' && drawMode) applyShapes([])
     else if (name === 'space' && towerMode && tower && !tower.over) applyTower(dropTower(tower))
     else if (name === 'g' && boxMode) gravity = !gravity
     else if (name === 'f' && boxMode) stick = !stick
@@ -416,7 +436,8 @@ let lastCamera: Camera | undefined
 /**
  * Names what is under cell (x, y) of the terminal, in the status bar, or drops a box there:
  * in the air with `air`. With `remove`, takes out the box there. In the tower game, starts a
- * tower there or drops the swinging box.
+ * tower there or drops the swinging box. In the draw mode, places a shape there or, with
+ * `remove`, takes out the shape there.
  */
 async function inspect(x: number, y: number, { air = false, remove = false } = {}) {
   // Terminal row 0 is the status bar; the frame starts below it.
@@ -431,6 +452,14 @@ async function inspect(x: number, y: number, { air = false, remove = false } = {
   const picked = await tracer.pick(lastCamera, (x + 0.5) / cols, v)
   if (towerMode) {
     if (!remove && picked && picked.kind !== 'player') applyTower(startTower(picked))
+    showBars()
+    return
+  }
+  if (drawMode) {
+    const drawing = { profile: DEFAULT_PROFILE, cells: DEFAULT_CELLS, size: { spin: 12, extrude: 16, blobs: 4 }[drawTool], height: 3 }
+    const placed = !remove && picked && picked.kind !== 'player' && placeShape(drawTool, drawing, picked, lastCamera, COLORS[Math.floor(Math.random() * COLORS.length)]!)
+    if (remove && picked?.drawn !== undefined) applyShapes(removeShape(shapes, picked.drawn, picked.point))
+    else if (placed) applyShapes([...shapes, placed])
     showBars()
     return
   }
@@ -459,7 +488,7 @@ function onMouse(e: MouseEvent) {
   if (e.kind === 'down') drag = { x: e.x, y: e.y, pan: e.button === 2, moved: false, air: !!e.modified }
   else if (e.kind === 'up') {
     // A press that never left its cell is a click; a right one only removes boxes.
-    if (drag && !drag.moved && (!drag.pan || boxMode || towerMode)) void inspect(e.x, e.y, { air: drag.air, remove: drag.pan })
+    if (drag && !drag.moved && (!drag.pan || boxMode || towerMode || drawMode)) void inspect(e.x, e.y, { air: drag.air, remove: drag.pan })
     drag = undefined
   }
   else if (drag) {

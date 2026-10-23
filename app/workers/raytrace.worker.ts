@@ -1,7 +1,7 @@
 // Ray traces off the main thread. Holds its own copy of the scene, so each frame only needs
 // a camera in and two small pixel buffers out. The page runs several of these in parallel,
 // each tracing an interleaved share of the rows (see lib/tracers.ts).
-import type { Primitive } from '../environments/types'
+import type { Mesh, Primitive } from '../environments/types'
 import { renderScene, type Camera } from '../lib/raycaster'
 import { createPlayerSlot, createSceneSlot, pickScene, poseScene, type Picked } from '../lib/tracers'
 import type { PlayerKind, PlayerPose } from '../players'
@@ -9,6 +9,7 @@ import type { PlayerKind, PlayerPose } from '../players'
 export type WorkerRequest =
   | { type: 'scene', envId: string, seed: number, size: number }
   | { type: 'boxes', boxes: Primitive[] }
+  | { type: 'shapes', meshes: Mesh[] }
   | { type: 'player', kind: PlayerKind | null, seed: number }
   /** What the ray through (u, v) of the view hits, in the scene as the last frame posed it. */
   | { type: 'pick', camera: Camera, u: number, v: number }
@@ -35,6 +36,10 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   }
   else if (msg.type === 'boxes') {
     const summary = slot.setBoxes(msg.boxes)
+    if (summary) reply({ type: 'scene', summary })
+  }
+  else if (msg.type === 'shapes') {
+    const summary = slot.setShapes(msg.meshes)
     if (summary) reply({ type: 'scene', summary })
   }
   else if (msg.type === 'player') {

@@ -45,6 +45,8 @@ const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
 const towerMode = useTowerMode()
 const tower = useTower(props.env)
+const drawMode = useDrawMode()
+const shapes = useShapes(props.env)
 const dropPreview = useDropPreview(props.env, pickAt)
 
 function onPointerDown(e: PointerEvent) {
@@ -71,10 +73,11 @@ function onPointerUp(e: PointerEvent) {
 
 /**
  * Names what is under the pointer, with the ray tracer's copy of the scene on show, or drops
- * a box there: in the air with Shift. A right click takes out a box.
+ * a box there: in the air with Shift. A right click takes out a box. In the draw mode a click
+ * places the drawn shape, and a right click takes one out.
  */
 function inspect(e: PointerEvent) {
-  if (!boxMode.value && !towerMode.value && (e.button !== 0 || e.shiftKey)) return
+  if (!boxMode.value && !towerMode.value && !drawMode.value && (e.button !== 0 || e.shiftKey)) return
   // Mid-game a click drops the swinging box at once: no need to know what is under it.
   if (towerMode.value && tower.game.value && !tower.game.value.over) {
     if (e.button === 0) tower.drop()
@@ -93,6 +96,11 @@ function inspect(e: PointerEvent) {
   if (boxMode.value) {
     if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
     else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)
+    return
+  }
+  if (drawMode.value) {
+    if (e.button === 2 && picked) shapes.remove(picked)
+    else if (e.button !== 2 && picked && picked.kind !== 'player') shapes.place(picked, view.camera)
     return
   }
   inspected.value = picked ? { ...picked, x, y } : undefined
@@ -119,7 +127,7 @@ function onWheel(e: WheelEvent) {
 
 const { time: timeOfDay } = useTimeOfDay()
 
-const { scene, camera, build, setBoxes, animate, setPlayer, placePlayer, setTimeOfDay, generated: environmentScene, dispose } = createEnvironmentScene()
+const { scene, camera, build, setBoxes, setShapes, animate, setPlayer, placePlayer, setTimeOfDay, generated: environmentScene, dispose } = createEnvironmentScene()
 let renderer: THREE.WebGPURenderer | undefined
 let shaderAscii: ReturnType<typeof createShaderAscii> | undefined
 let controls: OrbitControls | undefined
@@ -198,6 +206,10 @@ onMounted(async () => {
 watch(() => [props.env, props.seed, props.size], rebuild)
 watch(boxes, (b) => {
   const summary = setBoxes(b)
+  if (summary) showStats(summary)
+}, { immediate: true })
+watch(shapes.meshes, (m) => {
+  const summary = setShapes(m)
   if (summary) showStats(summary)
 }, { immediate: true })
 watch(() => props.ascii?.fontSize, resize)

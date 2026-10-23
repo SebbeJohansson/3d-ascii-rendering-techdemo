@@ -27,6 +27,6 @@ Ideas for what to add next, best first within each group. Time estimates are rou
 
 ## Drawing shapes
 
-- [ ] **Spin a profile.** Draw half an outline and spin it into a vase, bottle or tower. ~half a day
-- [ ] **Extrude an outline.** Draw a 2D shape on a grid and pull it up into a solid: walls, letters, logos. ~half a day
-- [ ] **Sculpt with blobs.** Place spheres that melt together, reusing the dragon's SDF and surface nets code. ~1 day
+- [x] **Spin a profile.** Draw half an outline and spin it into a vase, bottle or tower. ~half a day
+- [x] **Extrude an outline.** Draw a 2D shape on a grid and pull it up into a solid: walls, letters, logos. ~half a day
+- [x] **Sculpt with blobs.** Place spheres that melt together, reusing the dragon's SDF and surface nets code. ~1 day

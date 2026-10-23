@@ -126,6 +126,7 @@ function startTracer() {
     : gpuGlyphTracer ?? (props.worker ? createWorkerTracer(events) : createMainThreadTracer(events))
   tracer.setPlayer(playerKind.value, props.seed)
   tracer.setBoxes(boxes.value)
+  tracer.setShapes(shapes.meshes.value)
   rebuild()
 }
 
@@ -239,7 +240,8 @@ function gpuGlyphs(): GpuGlyphs | null {
 // Mouse controls: left drag orbits, right or shift drag pans, wheel zooms. Around a spawned
 // player, any drag orbits and the wheel zooms, both through its chase camera. A left click
 // that barely moves names what is under the pointer. In the boxes mode a click drops a box,
-// in the air with Shift, and a right click takes one out.
+// in the air with Shift, and a right click takes one out; in the draw mode the same goes for
+// drawn shapes.
 let drag: { x: number, y: number, pan: boolean, startX: number, startY: number } | undefined
 /** A press that moves less than this many pixels is a click, not a drag. */
 const CLICK_SLOP = 4
@@ -249,6 +251,8 @@ const boxMode = useBoxMode()
 const { boxes, drop, remove } = useBoxes(props.env)
 const towerMode = useTowerMode()
 const tower = useTower(props.env)
+const drawMode = useDrawMode()
+const shapes = useShapes(props.env)
 const dropPreview = useDropPreview(props.env, pickAt)
 
 function setView(next: CameraView) {
@@ -283,7 +287,7 @@ function onPointerMove(e: PointerEvent) {
 }
 
 function onPointerUp(e: PointerEvent) {
-  const click = !drag?.pan || boxMode.value || towerMode.value
+  const click = !drag?.pan || boxMode.value || towerMode.value || drawMode.value
   if (drag && click && e.type === 'pointerup' && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < CLICK_SLOP) void inspect(e)
   drag = undefined
   stopMoving()
@@ -313,6 +317,11 @@ async function inspect(e: PointerEvent) {
   if (boxMode.value) {
     if (e.button === 2 && picked?.box !== undefined) remove(picked.box)
     else if (e.button !== 2 && picked && picked.kind !== 'player') drop(picked, e.shiftKey)
+    return
+  }
+  if (drawMode.value) {
+    if (e.button === 2 && picked) shapes.remove(picked)
+    else if (e.button !== 2 && picked && picked.kind !== 'player') shapes.place(picked, view.camera)
     return
   }
   inspected.value = picked ? { ...picked, x, y } : undefined
@@ -354,6 +363,7 @@ onMounted(async () => {
 
 watch(() => [props.env, props.seed, props.size], rebuild)
 watch(boxes, b => tracer?.setBoxes(b))
+watch(shapes.meshes, m => tracer?.setShapes(m))
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.occlusion, () => (dirty = true))
 watch(() => [props.fontSize, props.blocks], resize)
