@@ -58,6 +58,13 @@ export interface Mesh {
   /** A shape drawn in the panel (see lib/shapes.ts): its index among them. */
   drawn?: number
   /**
+   * Laid out as a grid of n × n vertices: vertex i * n + j at x = start + i * step,
+   * z = start + j * step, and per cell the triangles [a, a + 1, a + n] and
+   * [a + n, a + 1, a + n + 1] for its corner a. The CPU ray tracer then walks the grid
+   * instead of a BVH (see lib/heightfield.ts), much faster for long flat rays over land.
+   */
+  heightfield?: { n: number, start: number, step: number }
+  /**
    * Land (a mountainside), not a thing standing on it: a shape placed against its side stands
    * on it below, where against a thing's side (the dragon's flank) it stands on what is under the thing.
    */

@@ -217,7 +217,8 @@ const EPS = 1e-4
  * Nearest triangle hit closer than maxT, or Infinity. With anyHit it returns the first hit
  * found, which is all a shadow ray needs.
  */
-export function intersectBvh(bvh: Bvh, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, anyHit: boolean): number {
+/** With `skip`, the subtree under that node is left out (traced some other way). */
+export function intersectBvh(bvh: Bvh, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxT: number, anyHit: boolean, skip = -1): number {
   const { bounds, nodes, order, positions: p, indices } = bvh
   const ix = 1 / (dx || 1e-12)
   const iy = 1 / (dy || 1e-12)
@@ -228,6 +229,7 @@ export function intersectBvh(bvh: Bvh, ox: number, oy: number, oz: number, dx: n
 
   while (top > 0) {
     const node = stack[--top]!
+    if (node === skip) continue
 
     // Slab test against the node's box; skip it if it is missed or starts beyond the best hit.
     const o = node * 6

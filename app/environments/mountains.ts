@@ -135,7 +135,7 @@ function landMesh({ n, step, start, heights }: ReturnType<typeof sampleHeights>,
       colors.set(color, k * 3)
     }
   }
-  return { positions, normals, colors, indices }
+  return { positions, normals, colors, indices, heightfield: { n, start, step } }
 }
 
 export const mountains: Environment = {

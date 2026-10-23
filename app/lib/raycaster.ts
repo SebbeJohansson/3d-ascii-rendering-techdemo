@@ -11,6 +11,7 @@
 import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
 import type { PlayerPose } from '../players/types'
 import { lightingAt, NOON, type Lighting } from '../environments/lighting'
+import { buildHeightfield, intersectHeightfield, type Heightfield } from './heightfield'
 import { buildBvh, bvhHit, intersectBvh, joinBvhs, joinedNode, joinRoot, nodesHolding, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, scale, type Vec3 } from './math'
@@ -52,6 +53,9 @@ export interface RaycastScene {
     albedo: Float32Array
     /** The BVH nodes animating the environment can move (see nodesHolding()); all if unset. */
     refit?: Uint32Array
+    /** Land laid out as a grid, which the CPU walks instead of its subtree, node `skip`. */
+    terrain?: Heightfield
+    skip?: number
   }
   /** What `mesh` is made of: the environment's meshes and the drawn shapes', each with a BVH. */
   parts?: { env?: MeshPart, shapes?: MeshPart }
@@ -235,6 +239,9 @@ export interface MeshPart {
   bvh: Bvh
   normals: Float32Array
   albedo: Float32Array
+  refit?: Uint32Array
+  terrain?: Heightfield
+  skip?: number
   /** Each source mesh's indices and colors, to tell whether new meshes are the same ones. */
   sources: { indices: Uint32Array, colors: Float32Array }[]
 }
@@ -257,8 +264,21 @@ function buildPart(meshes: readonly Mesh[], withBvh = true): MeshPart {
     v += m.positions.length / 3
     t += m.indices.length
   }
-  const bvh = withBvh ? buildBvh(positions, indices) : { bounds: new Float32Array(0), nodes: new Uint32Array(0), order: new Uint32Array(0), positions, indices }
-  return { bvh, normals, albedo, sources: meshes.map(({ indices, colors }) => ({ indices, colors })) }
+  const sources = meshes.map(({ indices, colors }) => ({ indices, colors }))
+  if (!withBvh) return { bvh: { bounds: new Float32Array(0), nodes: new Uint32Array(0), order: new Uint32Array(0), positions, indices }, normals, albedo, sources }
+  // Land laid out as a grid, last: its own subtree, which the CPU skips to walk the grid
+  // instead (the GPU traces the whole BVH).
+  const land = meshes.at(-1)!.heightfield
+  if (!land) return { bvh: buildBvh(positions, indices), normals, albedo, sources }
+  const landVertices = meshes.at(-1)!.positions.length
+  const landIndices = meshes.at(-1)!.indices.length
+  const rest = positions.length - landVertices
+  const restIndices = indices.length - landIndices
+  const terrain = buildHeightfield(positions, rest / 3, restIndices / 3, land)
+  const landBvh = buildBvh(positions.slice(rest), meshes.at(-1)!.indices)
+  if (!rest) return { bvh: landBvh, normals, albedo, sources, terrain, skip: 0 }
+  const bvh = joinBvhs(buildBvh(positions.slice(0, rest), indices.slice(0, restIndices)), landBvh)
+  return { bvh, normals, albedo, sources, terrain, skip: 2 }
 }
 
 /**
@@ -336,7 +356,9 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[], prebuilt?: M
       out.set(b, a.length)
       return out
     }
-    s.mesh = { bvh, normals: join(env.normals, shapes.normals), albedo: join(env.albedo, shapes.albedo) }
+    // The environment's subtree moves to node 1, the rest of its nodes two on (see joinBvhs()).
+    const skip = env.skip === undefined ? undefined : env.skip === 0 ? 1 : env.skip + 2
+    s.mesh = { bvh, normals: join(env.normals, shapes.normals), albedo: join(env.albedo, shapes.albedo), terrain: env.terrain, skip }
     // The environment may have moved (flapping wings) since its part was built.
     updateMeshes(s, { meshes: [...meshes], primitives: [], extent: 0, summary: '' })
   }
@@ -628,7 +650,8 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
 
   // Meshes: one BVH query. The grid walk below then only accepts primitives closer than this.
   if (s.mesh) {
-    const t = intersectBvh(s.mesh.bvh, ox, oy, oz, dx, dy, dz, best, anyHit)
+    let t = intersectBvh(s.mesh.bvh, ox, oy, oz, dx, dy, dz, best, anyHit, s.mesh.skip)
+    if (s.mesh.terrain && !(anyHit && t < best)) t = Math.min(t, intersectHeightfield(s.mesh.terrain, s.mesh.bvh.positions, ox, oy, oz, dx, dy, dz, Math.min(t, best)))
     if (t < best) {
       if (anyHit) return true
       best = t
@@ -641,6 +664,21 @@ function trace(s: RaycastScene, ox: number, oy: number, oz: number, dx: number, 
 
   // No primitives (e.g. a mesh-only environment on a huge floor): skip walking empty cells.
   if (s.cellItems.length === 0) {
+    hit.t = best
+    return hit.prim !== MISS
+  }
+
+  // Primitives only reach primitivesHeight, often far below the meshes' top (trees under a
+  // mountain's peaks): walk only the stretch of the ray below it.
+  if (oy + dy * t0 > s.primitivesHeight) {
+    if (dy >= 0) {
+      hit.t = best
+      return hit.prim !== MISS
+    }
+    t0 = (s.primitivesHeight - oy) * iy
+  }
+  if (dy > 0) t1 = Math.min(t1, (s.primitivesHeight - oy) * iy)
+  if (t0 > t1 || t0 >= best) {
     hit.t = best
     return hit.prim !== MISS
   }
