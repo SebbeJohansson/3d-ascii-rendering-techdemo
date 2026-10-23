@@ -1,6 +1,6 @@
 {
   "name": "3d-ascii",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Procedurally generated 3D worlds, ray traced into ASCII art in your terminal",
   "type": "module",
   "bin": { "3d-ascii": "dist/ascii.js" },
