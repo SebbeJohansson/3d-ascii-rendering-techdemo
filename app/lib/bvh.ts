@@ -309,3 +309,57 @@ export function refitBvh(bvh: Bvh) {
     bounds[o + 5] = maxZ
   }
 }
+
+/**
+ * Where node `i` of the second of two joined BVHs ends up (see joinBvhs()), given the first's
+ * node count. Its root goes right after the first's, the rest after all of the first's nodes.
+ */
+export const joinedNode = (i: number, firstNodes: number) => (i === 0 ? 2 : firstNodes + 1 + i)
+
+/**
+ * One BVH over two meshes' triangles, under a new root with each BVH as a child: node 1 is
+ * `a`'s root and node 2 `b`'s, and each keeps its own subtree. Unlike one BVH built over both,
+ * `b` can be rebuilt on its own later and written back in place (joinedNode() says where),
+ * without touching `a` or loosening its boxes. `b`'s vertices and triangles come after `a`'s.
+ */
+export function joinBvhs(a: Bvh, b: Bvh): Bvh {
+  const aNodes = a.nodes.length / 2
+  const bNodes = b.nodes.length / 2
+  const aVertices = a.positions.length / 3
+  const aTriangles = a.indices.length / 3
+  const positions = new Float32Array(a.positions.length + b.positions.length)
+  positions.set(a.positions)
+  positions.set(b.positions, a.positions.length)
+  const indices = new Uint32Array(a.indices.length + b.indices.length)
+  indices.set(a.indices)
+  for (let i = 0; i < b.indices.length; i++) indices[a.indices.length + i] = b.indices[i]! + aVertices
+  const order = new Uint32Array(a.order.length + b.order.length)
+  order.set(a.order)
+  for (let i = 0; i < b.order.length; i++) order[a.order.length + i] = b.order[i]! + aTriangles
+
+  const count = 1 + aNodes + bNodes
+  const bounds = new Float32Array(count * 6)
+  const nodes = new Uint32Array(count * 2)
+  // a: root to 1, the rest two further on, so a node's children stay next to each other.
+  const mapA = (i: number) => (i === 0 ? 1 : i + 2)
+  const copy = (from: Bvh, i: number, to: number, map: (i: number) => number, firstTriangle: number) => {
+    bounds.set(from.bounds.subarray(i * 6, i * 6 + 6), to * 6)
+    const leafCount = from.nodes[i * 2 + 1]!
+    nodes[to * 2] = leafCount ? from.nodes[i * 2]! + firstTriangle : map(from.nodes[i * 2]!)
+    nodes[to * 2 + 1] = leafCount
+  }
+  for (let i = 0; i < aNodes; i++) copy(a, i, mapA(i), mapA, 0)
+  for (let i = 0; i < bNodes; i++) copy(b, i, joinedNode(i, aNodes), j => joinedNode(j, aNodes), aTriangles)
+  nodes[0] = 1
+  nodes[1] = 0
+  joinRoot(bounds)
+  return { bounds, nodes, order, positions, indices }
+}
+
+/** Sets the joined root's box (node 0) to hold its two children's, nodes 1 and 2. */
+export function joinRoot(bounds: Float32Array) {
+  for (let k = 0; k < 3; k++) {
+    bounds[k] = Math.min(bounds[6 + k]!, bounds[12 + k]!)
+    bounds[3 + k] = Math.max(bounds[9 + k]!, bounds[15 + k]!)
+  }
+}

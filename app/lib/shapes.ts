@@ -222,6 +222,29 @@ function solidColors(count: number, color: number) {
  * normals are shared, so curves look smooth. Ends off the axis are closed with flat caps.
  */
 export function spinMesh(shape: Extract<DrawnShape, { kind: 'spin' }>, drawn: number): Mesh {
+  const key = `${shape.size}|${shape.color}|${shape.profile.join(';')}`
+  let base = spinCache.get(key)
+  if (!base) {
+    base = spinAt({ ...shape, x: 0, y: 0, z: 0 })
+    spinCache.set(key, base)
+    // Only the newest few: a shape drawn again and again shouldn't keep every old one.
+    if (spinCache.size > SPIN_CACHE) spinCache.delete(spinCache.keys().next().value!)
+  }
+  // Moved by copying its vertices, sharing the rest: the renderers see the same mesh, moved.
+  const positions = new Float32Array(base.positions.length)
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] = base.positions[i]! + shape.x
+    positions[i + 1] = base.positions[i + 1]! + shape.y
+    positions[i + 2] = base.positions[i + 2]! + shape.z
+  }
+  return { ...base, positions, drawn }
+}
+
+/** Spun shapes at the origin by size, color and profile; see spinMesh(). */
+const spinCache = new Map<string, Mesh>()
+const SPIN_CACHE = 32
+
+function spinAt(shape: Extract<DrawnShape, { kind: 'spin' }>): Mesh {
   let points = shape.profile.map(([r, h]) => [Math.max(0, r) * shape.size, h * shape.size] as [number, number])
   points = points.filter((p, i) => i === 0 || Math.hypot(p[0] - points[i - 1]![0], p[1] - points[i - 1]![1]) > 1e-4)
   // Closed against the axis, the outline should run counterclockwise in (r, h), so that
@@ -299,7 +322,6 @@ export function spinMesh(shape: Extract<DrawnShape, { kind: 'spin' }>, drawn: nu
     indices: new Uint32Array(indices),
     roughness: 0.6,
     label: `Spun shape · ${Math.round(Math.max(...points.map(([, h]) => h)) - Math.min(...points.map(([, h]) => h)))} m tall`,
-    drawn,
   }
 }
 
@@ -418,8 +440,10 @@ export function shapeMeshes(shapes: readonly DrawnShape[]): Mesh[] {
     }
   })
   if (!blobs.length) return meshes
-  const same = (a: readonly unknown[], b: readonly unknown[]) => a.length === b.length && a.every((v, i) => v === b[i])
-  if (!blobCache || !same(blobCache.blobs, blobs) || !same(blobCache.drawn, blobIndices)) {
+  // By value: in a worker the shapes arrive as new copies every time.
+  const same = <T>(a: readonly T[], b: readonly T[], eq: (x: T, y: T) => boolean) => a.length === b.length && a.every((v, i) => eq(v, b[i]!))
+  const sameBlob = (a: DrawnShape, b: DrawnShape) => a.kind === 'blob' && b.kind === 'blob' && a.x === b.x && a.y === b.y && a.z === b.z && a.radius === b.radius && a.color === b.color
+  if (!blobCache || !same(blobCache.blobs, blobs, sameBlob) || !same(blobCache.drawn, blobIndices, (a, b) => a === b)) {
     blobCache = { blobs, drawn: blobIndices, mesh: blobMesh(blobs, blobIndices) }
   }
   meshes.push(blobCache.mesh)

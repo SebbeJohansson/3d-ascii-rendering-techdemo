@@ -11,7 +11,7 @@
 import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
 import type { PlayerPose } from '../players/types'
 import { lightingAt, NOON, type Lighting } from '../environments/lighting'
-import { buildBvh, bvhHit, intersectBvh, refitBvh, type Bvh } from './bvh'
+import { buildBvh, bvhHit, intersectBvh, joinBvhs, joinedNode, joinRoot, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, scale, type Vec3 } from './math'
 import { WINDOW_COLOR, WINDOW_GLOW, windowLit } from './windows'
@@ -50,9 +50,9 @@ export interface RaycastScene {
     normals: Float32Array
     /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
     albedo: Float32Array
-    /** Each source mesh's indices and colors, to tell whether new meshes are the same ones moved. */
-    sources: { indices: Uint32Array, colors: Float32Array }[]
   }
+  /** What `mesh` is made of: the environment's meshes and the drawn shapes', each with a BVH. */
+  parts?: { env?: MeshPart, shapes?: MeshPart }
   /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
   player?: RaycastPlayer
   /** Darken corners and creases with ambient occlusion rays. Set by the caller per frame. */
@@ -220,44 +220,116 @@ function same(a: Uint32Array | Float32Array, b: Uint32Array | Float32Array) {
   return true
 }
 
+/** Some meshes merged into one, with a BVH of their own. */
+interface MeshPart {
+  bvh: Bvh
+  normals: Float32Array
+  albedo: Float32Array
+  /** Each source mesh's indices and colors, to tell whether new meshes are the same ones. */
+  sources: { indices: Uint32Array, colors: Float32Array }[]
+}
+
+/** Meshes merged into one; with `withBvh` false, its BVH is left for the caller (bvh stays a stub). */
+function buildPart(meshes: readonly Mesh[], withBvh = true): MeshPart {
+  const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
+  const positions = new Float32Array(vertexCount * 3)
+  const normals = new Float32Array(vertexCount * 3)
+  const albedo = new Float32Array(vertexCount * 3)
+  const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0))
+  let v = 0
+  let t = 0
+  for (const m of meshes) {
+    positions.set(m.positions, v * 3)
+    normals.set(m.normals, v * 3)
+    const keep = 1 - (m.metalness ?? 0)
+    for (let i = 0; i < m.colors.length; i++) albedo[v * 3 + i] = m.colors[i]! * keep
+    for (let i = 0; i < m.indices.length; i++) indices[t + i] = m.indices[i]! + v
+    v += m.positions.length / 3
+    t += m.indices.length
+  }
+  const bvh = withBvh ? buildBvh(positions, indices) : { bounds: new Float32Array(0), nodes: new Uint32Array(0), order: new Uint32Array(0), positions, indices }
+  return { bvh, normals, albedo, sources: meshes.map(({ indices, colors }) => ({ indices, colors })) }
+}
+
 /**
- * Replaces the scene's meshes, merged into one so one BVH covers them all. Meshes that are
- * the same as before, only moved (a falling shape), are copied in and the BVH refitted, which
- * is much cheaper than building it again. Returns whether it was built again.
+ * BVHs of drawn shapes' meshes by their indices, with the first vertex they were built for.
+ * A falling shape's mesh keeps its indices (see spinMesh()) and only moves, so its BVH is the
+ * cached one shifted, not built again.
+ */
+const shapeBvhs = new WeakMap<Uint32Array, { bvh: Bvh, first: Vec3 }>()
+
+function shapeBvh(m: Mesh): Bvh {
+  const p = m.positions
+  const cached = shapeBvhs.get(m.indices)
+  if (!cached) {
+    const bvh = buildBvh(p, m.indices)
+    shapeBvhs.set(m.indices, { bvh, first: [p[0]!, p[1]!, p[2]!] })
+    return bvh
+  }
+  const d = [p[0]! - cached.first[0], p[1]! - cached.first[1], p[2]! - cached.first[2]]
+  if (cached.bvh.positions === p) return cached.bvh
+  const bounds = cached.bvh.bounds.slice()
+  for (let i = 0; i < bounds.length; i++) bounds[i]! += d[i % 3]!
+  return { ...cached.bvh, bounds, positions: p }
+}
+
+/** Drawn shapes' meshes merged, their BVHs (see shapeBvh()) joined into one. */
+function buildShapesPart(meshes: readonly Mesh[]): MeshPart {
+  let bvh = shapeBvh(meshes[0]!)
+  for (const m of meshes.slice(1)) bvh = joinBvhs(bvh, shapeBvh(m))
+  const merged = buildPart(meshes, false)
+  return { ...merged, bvh }
+}
+
+const sameMeshes = (part: MeshPart | undefined, meshes: readonly Mesh[]) =>
+  part ? part.sources.length === meshes.length && meshes.every((m, i) => same(m.indices, part.sources[i]!.indices) && same(m.colors, part.sources[i]!.colors)) : !meshes.length
+
+/**
+ * Replaces the scene's meshes. The environment's and the drawn shapes' (Mesh.drawn) get a
+ * BVH each, joined under one root (see joinBvhs()), so moving a shape only rebuilds its own
+ * small BVH: the environment's stays as built, its boxes tight. When the shapes only moved
+ * (a falling shape), their part is written into the joined BVH in place and the scene keeps
+ * its mesh object. Returns whether it got a new one.
  */
 export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
-  const old = s.mesh
-  if (old && old.sources.length === meshes.length && meshes.every((m, i) => same(m.indices, old.sources[i]!.indices) && same(m.colors, old.sources[i]!.colors))) {
-    let offset = 0
-    for (const m of meshes) {
-      old.bvh.positions.set(m.positions, offset)
-      old.normals.set(m.normals, offset)
-      offset += m.positions.length
-    }
-    refitBvh(old.bvh)
-    s.maxHeight = Math.max(s.primitivesHeight, old.bvh.bounds[4]!)
+  const envMeshes = meshes.filter(m => m.drawn === undefined)
+  const shapeMeshes = meshes.filter(m => m.drawn !== undefined)
+  const old = s.parts
+  const envSame = sameMeshes(old?.env, envMeshes)
+  const env = envSame ? old?.env : envMeshes.length ? buildPart(envMeshes) : undefined
+  // Nothing drawn, before or now, and the same environment: nothing to do.
+  if (envSame && !shapeMeshes.length && !old?.shapes) return false
+  const shapes = shapeMeshes.length ? buildShapesPart(shapeMeshes) : undefined
+  const mesh = s.mesh
+  const previous = old?.shapes
+  if (envSame && env && shapes && previous && mesh && mesh.bvh !== env.bvh
+    && shapes.bvh.positions.length === previous.bvh.positions.length && same(shapes.bvh.nodes, previous.bvh.nodes) && same(shapes.bvh.order, previous.bvh.order) && same(shapes.bvh.indices, previous.bvh.indices)) {
+    // Same shapes, same tree, moved: write their part in place.
+    const envNodes = env.bvh.nodes.length / 2
+    const at = env.bvh.positions.length
+    mesh.bvh.positions.set(shapes.bvh.positions, at)
+    mesh.normals.set(shapes.normals, at)
+    const nodes = shapes.bvh.nodes.length / 2
+    for (let i = 0; i < nodes; i++) mesh.bvh.bounds.set(shapes.bvh.bounds.subarray(i * 6, i * 6 + 6), joinedNode(i, envNodes) * 6)
+    joinRoot(mesh.bvh.bounds)
+    s.parts = { env, shapes }
+    s.maxHeight = Math.max(s.primitivesHeight, mesh.bvh.bounds[4]!)
     return false
   }
-  s.mesh = undefined
-  if (meshes.length) {
-    const vertexCount = meshes.reduce((n, m) => n + m.positions.length / 3, 0)
-    const positions = new Float32Array(vertexCount * 3)
-    const normals = new Float32Array(vertexCount * 3)
-    const albedo = new Float32Array(vertexCount * 3)
-    const indices = new Uint32Array(meshes.reduce((n, m) => n + m.indices.length, 0))
-    let v = 0
-    let t = 0
-    for (const m of meshes) {
-      positions.set(m.positions, v * 3)
-      normals.set(m.normals, v * 3)
-      const keep = 1 - (m.metalness ?? 0)
-      for (let i = 0; i < m.colors.length; i++) albedo[v * 3 + i] = m.colors[i]! * keep
-      for (let i = 0; i < m.indices.length; i++) indices[t + i] = m.indices[i]! + v
-      v += m.positions.length / 3
-      t += m.indices.length
+  s.parts = { env, shapes }
+  if (env && shapes) {
+    const bvh = joinBvhs(env.bvh, shapes.bvh)
+    const join = (a: Float32Array, b: Float32Array) => {
+      const out = new Float32Array(a.length + b.length)
+      out.set(a)
+      out.set(b, a.length)
+      return out
     }
-    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo, sources: meshes.map(({ indices, colors }) => ({ indices, colors })) }
+    s.mesh = { bvh, normals: join(env.normals, shapes.normals), albedo: join(env.albedo, shapes.albedo) }
+    // The environment may have moved (flapping wings) since its part was built.
+    updateMeshes(s, { meshes: [...meshes], primitives: [], extent: 0, summary: '' })
   }
+  else s.mesh = env ?? shapes
   s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
   return true
 }
