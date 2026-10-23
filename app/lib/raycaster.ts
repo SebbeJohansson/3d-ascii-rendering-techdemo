@@ -299,14 +299,15 @@ const sameMeshes = (part: MeshPart | undefined, meshes: readonly Mesh[]) =>
  * BVH each, joined under one root (see joinBvhs()), so moving a shape only rebuilds its own
  * small BVH: the environment's stays as built, its boxes tight. When the shapes only moved
  * (a falling shape), their part is written into the joined BVH in place and the scene keeps
- * its mesh object. Returns whether it got a new one.
+ * its mesh object. `prebuilt` is the environment's part built elsewhere (see
+ * buildRaycastScene()), used if it matches. Returns whether it got a new one.
  */
-export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
+export function setMeshes(s: RaycastScene, meshes: readonly Mesh[], prebuilt?: MeshPart) {
   const envMeshes = meshes.filter(m => m.drawn === undefined)
   const shapeMeshes = meshes.filter(m => m.drawn !== undefined)
   const old = s.parts
   const envSame = sameMeshes(old?.env, envMeshes)
-  const env = envSame ? old?.env : envMeshes.length ? buildPart(envMeshes) : undefined
+  const env = envSame ? old?.env : !envMeshes.length ? undefined : prebuilt && sameMeshes(prebuilt, envMeshes) ? prebuilt : buildPart(envMeshes)
   // Nothing drawn, before or now, and the same environment: nothing to do.
   if (envSame && !shapeMeshes.length && !old?.shapes && s.mesh === env) return false
   const shapes = shapeMeshes.length ? buildShapesPart(shapeMeshes) : undefined

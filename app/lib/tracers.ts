@@ -214,15 +214,37 @@ const POSE_EVERY = 0.1
 export function createScenePicker() {
   let built: { env: Environment, generated: EnvironmentScene, scene: RaycastScene, posed: number } | undefined
   const player = createPlayerSlot()
+  /** The meshes' part of the scene being prepared, built off the main thread. */
+  let prepared: { worker: TraceWorker, part?: MeshPart } | undefined
   return {
     setPlayer: player.set,
+    /**
+     * Builds the scene's BVH in a worker of its own, so the first pick doesn't freeze the
+     * page building it. Picks before it is ready build it here as before.
+     */
+    prepare(envId: string, seed: number, size: number) {
+      prepared?.worker.terminate()
+      const worker = spawnBrowserWorker()
+      const job: NonNullable<typeof prepared> = { worker }
+      prepared = job
+      worker.onmessage = (e) => {
+        if (e.data.type !== 'scene') return
+        job.part = e.data.part
+        worker.terminate()
+      }
+      worker.postMessage({ type: 'scene', envId, seed, size, mode: 'share', version: 0 }, [])
+    },
+    dispose() {
+      prepared?.worker.terminate()
+      prepared = undefined
+    },
     pick(env: Environment, generated: EnvironmentScene, pose: PlayerPose | undefined, time: number, camera: Camera, u: number, v: number) {
-      if (!built || built.env !== env || built.generated.extent !== generated.extent) built = { env, generated, scene: buildRaycastScene(env, generated), posed: time }
+      if (!built || built.env !== env || built.generated.extent !== generated.extent) built = { env, generated, scene: buildRaycastScene(env, generated, prepared?.part), posed: time }
       else if (built.generated !== generated) {
         // Boxes or shapes changed (or moved): update the copy in place. Moved shapes only
         // refit the meshes' BVH instead of building it again.
         if (built.generated.primitives !== generated.primitives) setPrimitives(built.scene, generated.primitives)
-        setMeshes(built.scene, generated.meshes ?? [])
+        setMeshes(built.scene, generated.meshes ?? [], prepared?.part)
         built.generated = generated
       }
       else if (env.animate && Math.abs(time - built.posed) >= POSE_EVERY) {

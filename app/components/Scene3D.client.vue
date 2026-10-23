@@ -138,6 +138,7 @@ const meter = createFrameMeter(perf => emit('perf', perf))
 function rebuild() {
   inspected.value = undefined
   showStats(build(props.env, props.seed, props.size))
+  picker.prepare(props.env.id, props.seed, props.size)
 }
 
 function showStats(summary: string) {
@@ -255,6 +256,7 @@ onBeforeUnmount(() => {
   // Keep the shared renderer alive for the next visit; only detach its canvas.
   renderer?.domElement.remove()
   shaderAscii?.dispose()
+  picker.dispose()
   dispose()
 })
 </script>
