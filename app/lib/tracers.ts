@@ -9,7 +9,7 @@ import type { Environment, EnvironmentScene, Mesh, Primitive } from '../environm
 import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '../players'
 import { lightingAt, NOON } from '../environments/lighting'
 import { withBoxes, type DropSpot } from './boxes'
-import { withShapes } from './shapes'
+import { shapeMeshes, withShapes, type DrawnShape } from './shapes'
 import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setMeshes, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
@@ -54,8 +54,11 @@ export interface Tracer {
   setScene: (envId: string, seed: number, size: number) => void
   /** Replaces the boxes dropped into the scene, now and in scenes set after. */
   setBoxes: (boxes: Primitive[]) => void
-  /** Replaces the meshes of shapes drawn into the scene, now and in scenes set after. */
-  setShapes: (meshes: Mesh[]) => void
+  /**
+   * Replaces the shapes drawn into the scene, now and in scenes set after. Their meshes are
+   * made where the scene is held: a falling shape posts a few numbers per frame, not a mesh.
+   */
+  setShapes: (shapes: DrawnShape[]) => void
   /** Spawns a player (or removes it, with null). Its colors come from the seed. */
   setPlayer: (kind: PlayerKind | null, seed: number) => void
   /**
@@ -171,8 +174,8 @@ export function createSceneSlot() {
       return slot.generated.summary
     },
     /** Returns the new summary, or undefined while there is no scene yet. */
-    setShapes(next: Mesh[]) {
-      shapes = next
+    setShapes(next: DrawnShape[]) {
+      shapes = shapeMeshes(next)
       if (!base || !slot.scene) return
       slot.generated = compose(base)
       setMeshes(slot.scene, slot.generated.meshes ?? [])
@@ -187,12 +190,19 @@ export function createSceneSlot() {
  * of the scene on the first pick, and brings moved meshes up to date before each one after.
  */
 export function createScenePicker() {
-  let built: { generated: EnvironmentScene, scene: RaycastScene } | undefined
+  let built: { env: Environment, generated: EnvironmentScene, scene: RaycastScene } | undefined
   const player = createPlayerSlot()
   return {
     setPlayer: player.set,
     pick(env: Environment, generated: EnvironmentScene, pose: PlayerPose | undefined, time: number, camera: Camera, u: number, v: number) {
-      if (built?.generated !== generated) built = { generated, scene: buildRaycastScene(env, generated) }
+      if (!built || built.env !== env || built.generated.extent !== generated.extent) built = { env, generated, scene: buildRaycastScene(env, generated) }
+      else if (built.generated !== generated) {
+        // Boxes or shapes changed (or moved): update the copy in place. Moved shapes only
+        // refit the meshes' BVH instead of building it again.
+        if (built.generated.primitives !== generated.primitives) setPrimitives(built.scene, generated.primitives)
+        setMeshes(built.scene, generated.meshes ?? [])
+        built.generated = generated
+      }
       else if (env.animate) updateMeshes(built.scene, generated)
       player.attach(built.scene, pose, time)
       return pickScene(env.id, generated, built.scene, player.name, camera, u, v)
@@ -271,8 +281,8 @@ export function createMainThreadTracer({ onScene, onFrame }: TracerEvents): Trac
       const summary = slot.setBoxes(boxes)
       if (summary) onScene(summary)
     },
-    setShapes(meshes) {
-      const summary = slot.setShapes(meshes)
+    setShapes(shapes) {
+      const summary = slot.setShapes(shapes)
       if (summary) onScene(summary)
     },
     setPlayer(kind, seed) {
@@ -373,8 +383,8 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
     setBoxes(boxes) {
       for (const w of workers) post(w, { type: 'boxes', boxes })
     },
-    setShapes(meshes) {
-      for (const w of workers) post(w, { type: 'shapes', meshes })
+    setShapes(shapes) {
+      for (const w of workers) post(w, { type: 'shapes', shapes })
     },
     setPlayer(kind, seed) {
       for (const w of workers) post(w, { type: 'player', kind, seed })

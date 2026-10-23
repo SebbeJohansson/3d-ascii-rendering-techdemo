@@ -126,7 +126,7 @@ function startTracer() {
     : gpuGlyphTracer ?? (props.worker ? createWorkerTracer(events) : createMainThreadTracer(events))
   tracer.setPlayer(playerKind.value, props.seed)
   tracer.setBoxes(boxes.value)
-  tracer.setShapes(shapes.meshes.value)
+  tracer.setShapes(shapes.items.value)
   rebuild()
 }
 
@@ -363,7 +363,7 @@ onMounted(async () => {
 
 watch(() => [props.env, props.seed, props.size], rebuild)
 watch(boxes, b => tracer?.setBoxes(b))
-watch(shapes.meshes, m => tracer?.setShapes(m))
+watch(shapes.items, s => tracer?.setShapes(s))
 watch(() => [props.color, props.atlas, props.cellBackground, props.stretch, props.outlines], draw)
 watch(() => props.occlusion, () => (dirty = true))
 watch(() => [props.fontSize, props.blocks], resize)

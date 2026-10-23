@@ -50,8 +50,8 @@ export interface RaycastScene {
     normals: Float32Array
     /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
     albedo: Float32Array
-    /** Each source mesh's indices, to tell whether new meshes are the same ones moved. */
-    sources: Uint32Array[]
+    /** Each source mesh's indices and colors, to tell whether new meshes are the same ones moved. */
+    sources: { indices: Uint32Array, colors: Float32Array }[]
   }
   /** The spawned player, if any. Not part of the environment: set and cleared by the caller. */
   player?: RaycastPlayer
@@ -212,8 +212,8 @@ export function setPrimitives(s: RaycastScene, primitives: Primitive[]) {
   s.maxHeight = s.mesh ? Math.max(maxHeight, s.mesh.bvh.bounds[4]!) : maxHeight
 }
 
-/** Whether two index arrays are equal, value by value. */
-function sameIndices(a: Uint32Array, b: Uint32Array) {
+/** Whether two arrays are equal, value by value. */
+function same(a: Uint32Array | Float32Array, b: Uint32Array | Float32Array) {
   if (a === b) return true
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
@@ -227,7 +227,7 @@ function sameIndices(a: Uint32Array, b: Uint32Array) {
  */
 export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
   const old = s.mesh
-  if (old && old.sources.length === meshes.length && meshes.every((m, i) => sameIndices(m.indices, old.sources[i]!))) {
+  if (old && old.sources.length === meshes.length && meshes.every((m, i) => same(m.indices, old.sources[i]!.indices) && same(m.colors, old.sources[i]!.colors))) {
     let offset = 0
     for (const m of meshes) {
       old.bvh.positions.set(m.positions, offset)
@@ -256,7 +256,7 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
       v += m.positions.length / 3
       t += m.indices.length
     }
-    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo, sources: meshes.map(m => m.indices) }
+    s.mesh = { bvh: buildBvh(positions, indices), normals, albedo, sources: meshes.map(({ indices, colors }) => ({ indices, colors })) }
   }
   s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
   return true

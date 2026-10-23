@@ -228,16 +228,20 @@ export function createEnvironmentScene() {
 
   /** Replaces the drawn shapes' meshes. Returns the summary counting them, once something is built. */
   function setShapes(next: Mesh[]) {
-    const moved = next.length === shapes.length && next.every((m, i) => {
-      const a = m.indices
-      const b = shapes[i]!.indices
-      return a.length === b.length && a.every((v, k) => v === b[k])
-    })
+    const same = (a: ArrayLike<number>, b: ArrayLike<number>) => {
+      if (a === b) return true
+      if (a.length !== b.length) return false
+      for (let k = 0; k < a.length; k++) if (a[k] !== b[k]) return false
+      return true
+    }
+    const previous = shapes
+    const moved = next.length === previous.length && next.every((m, i) => m === previous[i] || (same(m.indices, previous[i]!.indices) && same(m.colors, previous[i]!.colors)))
     shapes = next
     withDropped = undefined
     // The same shapes, moved (falling): only their vertices change.
     if (moved) {
       shapeMeshes.forEach((mesh, i) => {
+        if (next[i] === previous[i]) return
         const position = mesh.geometry.attributes.position!
         ;(position.array as Float32Array).set(next[i]!.positions)
         position.needsUpdate = true

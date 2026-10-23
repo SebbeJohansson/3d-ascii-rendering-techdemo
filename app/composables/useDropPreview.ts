@@ -75,7 +75,8 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
     window.removeEventListener('keyup', onKey)
   })
   // A drop changes what is there and rolls the next box.
-  watch([boxes, boxMode, towerMode, drawMode, shapes.meshes, drawing], update)
+  // Counts, not the boxes and shapes themselves: picking every frame while they fall is slow.
+  watch([() => boxes.value.length, boxMode, towerMode, drawMode, shapes.count, drawing], update)
 
   return {
     outline,

@@ -118,7 +118,9 @@ export function useShapes(env: Environment) {
     placeShape(tool.value, drawing.value, spot, camera, COLORS[color.value] ?? COLORS[roll.value]!)
 
   return {
-    /** Spun shapes and the blob sculpture, as meshes for the views. */
+    /** The shapes themselves: what the ray tracers are handed. */
+    items,
+    /** Spun shapes and the blob sculpture, as meshes for the 3D view. */
     meshes: computed<Mesh[]>(() => markRaw(shapeMeshes(items.value))),
     /** Extruded shapes, as boxes: they go with the dropped boxes. */
     boxes: computed<Primitive[]>(() => markRaw(shapeBoxes(items.value))),

@@ -12,7 +12,8 @@
  *   needs, and reads the frame back otherwise, e.g. for the lens, which the CPU draws.
  */
 import { getEnvironment } from '../../environments'
-import type { Mesh, Primitive } from '../../environments/types'
+import type { Primitive } from '../../environments/types'
+import type { DrawnShape } from '../shapes'
 import { NOON } from '../../environments/lighting'
 import type { Bvh } from '../bvh'
 import { linearToSrgbByte } from '../color'
@@ -213,9 +214,9 @@ export function createGpuTracer({ onScene, onFrame }: TracerEvents, canvas?: HTM
     onScene(summary)
   }
 
-  function setShapes(meshes: Mesh[]) {
+  function setShapes(shapes: DrawnShape[]) {
     const before = slot.scene?.mesh
-    const summary = slot.setShapes(meshes)
+    const summary = slot.setShapes(shapes)
     if (!summary || !buffers) return
     // The same meshes moved: only their vertices and bounds change.
     if (before && slot.scene!.mesh === before && mesh) writeMoved(buffers.meshF, before.bvh, before.normals, mesh)

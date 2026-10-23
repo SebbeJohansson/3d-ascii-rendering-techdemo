@@ -10,7 +10,7 @@ import { benchmarkView, CAMERA_FOV, DEFAULT_VIEW, orbitView, panView, zoomView, 
 import { DAY_LENGTH, formatTimeOfDay, lightingAt, NOON } from '../app/environments/lighting'
 import { dropBox, fallBoxes, removeBox, withBoxes, type DroppedBox } from '../app/lib/boxes'
 import { dropTower, startTower, stepTower, type TowerGame } from '../app/lib/tower'
-import { COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, DRAW_TOOLS, fallShapes, placeShape, removeShape, shapeBoxes, shapeMeshes, type DrawnShape, type DrawTool } from '../app/lib/shapes'
+import { COLORS, DEFAULT_CELLS, DEFAULT_PROFILE, DRAW_TOOLS, fallShapes, placeShape, removeShape, shapeBoxes, type DrawnShape, type DrawTool } from '../app/lib/shapes'
 import { hexToBytes } from '../app/lib/color'
 import { createFrameMeter, type FramePerf } from '../app/lib/frameMeter'
 import { defaultChase, followPlayer, orbitChase, spawnPose, stepPlayer, swapPose, zoomChase, type PlayerMotion } from '../app/lib/playerMotion'
@@ -308,7 +308,7 @@ function applyTower(next: TowerGame | undefined) {
 
 function applyShapes(next: DrawnShape[]) {
   shapes = next
-  tracer.setShapes(shapeMeshes(shapes))
+  tracer.setShapes(shapes)
   showBoxes()
 }
 
