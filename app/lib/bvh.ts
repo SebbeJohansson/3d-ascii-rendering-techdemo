@@ -76,34 +76,57 @@ export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
     }
   }
 
-  const order = new Uint32Array(triCount).map((_, i) => i)
+  const order = new Uint32Array(triCount)
+  for (let i = 0; i < triCount; i++) order[i] = i
   // A binary tree with leaves of >= 1 triangle has fewer than 2 × triCount nodes.
   const bounds = new Float32Array(Math.max(1, triCount * 2) * 6)
   const nodes = new Uint32Array(Math.max(1, triCount * 2) * 2)
   let nodeCount = 1
 
-  // Build iteratively: [node, first, count] work items.
-  const stack: [number, number, number][] = [[0, 0, triCount]]
-  while (stack.length) {
-    const [node, first, count] = stack.pop()!
+  // Build iteratively: node, first, count per work item. Plain numbers and typed arrays
+  // throughout: allocating per node made building the dragon's BVH several times slower.
+  const stack = new Uint32Array(Math.max(1, triCount) * 3 * 2)
+  let top = 0
+  stack[top++] = 0
+  stack[top++] = 0
+  stack[top++] = triCount
+  const lo = new Float64Array(3)
+  const hi = new Float64Array(3)
+  const clo = new Float64Array(3)
+  const chi = new Float64Array(3)
+  while (top > 0) {
+    const count = stack[--top]!
+    const first = stack[--top]!
+    const node = stack[--top]!
     // Bounds of this node's triangles, and of their centroids (to pick the split axis).
-    const lo = [Infinity, Infinity, Infinity]
-    const hi = [-Infinity, -Infinity, -Infinity]
-    const clo = [Infinity, Infinity, Infinity]
-    const chi = [-Infinity, -Infinity, -Infinity]
+    lo.fill(Infinity)
+    hi.fill(-Infinity)
+    clo.fill(Infinity)
+    chi.fill(-Infinity)
     for (let i = first; i < first + count; i++) {
       const t = order[i]!
       for (let axis = 0; axis < 3; axis++) {
-        lo[axis] = Math.min(lo[axis]!, triBounds[t * 6 + axis]!)
-        hi[axis] = Math.max(hi[axis]!, triBounds[t * 6 + 3 + axis]!)
-        clo[axis] = Math.min(clo[axis]!, centroids[t * 3 + axis]!)
-        chi[axis] = Math.max(chi[axis]!, centroids[t * 3 + axis]!)
+        const tl = triBounds[t * 6 + axis]!
+        const th = triBounds[t * 6 + 3 + axis]!
+        const c = centroids[t * 3 + axis]!
+        if (tl < lo[axis]!) lo[axis] = tl
+        if (th > hi[axis]!) hi[axis] = th
+        if (c < clo[axis]!) clo[axis] = c
+        if (c > chi[axis]!) chi[axis] = c
       }
     }
-    bounds.set([...lo, ...hi], node * 6)
+    const o = node * 6
+    bounds[o] = lo[0]!
+    bounds[o + 1] = lo[1]!
+    bounds[o + 2] = lo[2]!
+    bounds[o + 3] = hi[0]!
+    bounds[o + 4] = hi[1]!
+    bounds[o + 5] = hi[2]!
 
-    const extents = [0, 1, 2].map(axis => chi[axis]! - clo[axis]!)
-    if (count <= LEAF_SIZE || Math.max(...extents) === 0) {
+    const ex = chi[0]! - clo[0]!
+    const ey = chi[1]! - clo[1]!
+    const ez = chi[2]! - clo[2]!
+    if (count <= LEAF_SIZE || (ex <= 0 && ey <= 0 && ez <= 0)) {
       nodes[node * 2] = first
       nodes[node * 2 + 1] = count
       continue
@@ -116,18 +139,24 @@ export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
     let bestPlane = 0
     let bestCost = Infinity
     for (let axis = 0; axis < 3; axis++) {
-      if (extents[axis] === 0) continue
+      const extent = axis === 0 ? ex : axis === 1 ? ey : ez
+      if (extent === 0) continue
       binCounts.fill(0)
-      binBounds.fill(Infinity)
-      for (let b = 0; b < BINS; b++) for (let c = 3; c < 6; c++) binBounds[b * 6 + c] = -Infinity
-      const scale = BINS / extents[axis]!
+      for (let b = 0; b < BINS; b++) {
+        binBounds[b * 6] = binBounds[b * 6 + 1] = binBounds[b * 6 + 2] = Infinity
+        binBounds[b * 6 + 3] = binBounds[b * 6 + 4] = binBounds[b * 6 + 5] = -Infinity
+      }
+      const scale = BINS / extent
+      const from = clo[axis]!
       for (let i = first; i < first + count; i++) {
         const t = order[i]!
-        const b = Math.min(BINS - 1, Math.floor((centroids[t * 3 + axis]! - clo[axis]!) * scale))
+        const b = Math.min(BINS - 1, Math.floor((centroids[t * 3 + axis]! - from) * scale))
         binCounts[b]!++
+        const bb = b * 6
+        const tb = t * 6
         for (let c = 0; c < 3; c++) {
-          binBounds[b * 6 + c] = Math.min(binBounds[b * 6 + c]!, triBounds[t * 6 + c]!)
-          binBounds[b * 6 + 3 + c] = Math.max(binBounds[b * 6 + 3 + c]!, triBounds[t * 6 + 3 + c]!)
+          if (triBounds[tb + c]! < binBounds[bb + c]!) binBounds[bb + c] = triBounds[tb + c]!
+          if (triBounds[tb + 3 + c]! > binBounds[bb + 3 + c]!) binBounds[bb + 3 + c] = triBounds[tb + 3 + c]!
         }
       }
       // Sweep from the right to get each plane's right-hand area and count, then from the left.
@@ -146,11 +175,12 @@ export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
     let leftCount = count >> 1
     if (bestAxis >= 0) {
       const axis = bestAxis
-      const scale = BINS / extents[axis]!
+      const scale = BINS / (axis === 0 ? ex : axis === 1 ? ey : ez)
+      const from = clo[axis]!
       let i = first
       let j = first + count - 1
       while (i <= j) {
-        if (Math.min(BINS - 1, Math.floor((centroids[order[i]! * 3 + axis]! - clo[axis]!) * scale)) < bestPlane) i++
+        if (Math.min(BINS - 1, Math.floor((centroids[order[i]! * 3 + axis]! - from) * scale)) < bestPlane) i++
         else {
           const tmp = order[i]!
           order[i] = order[j]!
@@ -166,7 +196,12 @@ export function buildBvh(positions: Float32Array, indices: Uint32Array): Bvh {
     nodeCount += 2
     nodes[node * 2] = left
     nodes[node * 2 + 1] = 0
-    stack.push([left, first, leftCount], [left + 1, first + leftCount, count - leftCount])
+    stack[top++] = left
+    stack[top++] = first
+    stack[top++] = leftCount
+    stack[top++] = left + 1
+    stack[top++] = first + leftCount
+    stack[top++] = count - leftCount
   }
 
   return { bounds: bounds.slice(0, nodeCount * 6), nodes: nodes.slice(0, nodeCount * 2), order, positions, indices }
