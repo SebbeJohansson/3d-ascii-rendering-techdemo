@@ -83,6 +83,10 @@ export function poseScene(envId: string, generated: EnvironmentScene, scene: Ray
   updateMeshes(scene, generated)
 }
 
+/** How far out from a thing's side to look for where it ends, and in what steps, m. */
+const MAX_BESIDE = 40
+const BESIDE_STEP = 0.5
+
 /**
  * Casts the ray through (u, v) of the camera's view and names what it hits. `scene` is the
  * ray tracer's copy of `generated`; `player` is the spawned player's name, if any.
@@ -93,6 +97,8 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
   const env = getEnvironment(envId)
   let label: string | undefined
   let drawn: number | undefined
+  /** The clicked mesh's triangles, from..to, when it is a thing rather than land. */
+  let thing: [number, number] | undefined
   if (hit.kind === 'ground') label = env.groundLabel ?? (env.reflectance ? 'Sea' : 'Ground')
   else if (hit.kind === 'player') label = player
   else if (hit.kind === 'primitive') ({ label, drawn } = generated.primitives[hit.index] ?? {})
@@ -100,21 +106,37 @@ export function pickScene(envId: string, generated: EnvironmentScene, scene: Ray
     // The meshes were merged in order: find the one this triangle came from.
     let first = 0
     for (const mesh of generated.meshes ?? []) {
-      first += mesh.indices.length / 3
-      if (hit.triangle < first) {
+      const end = first + mesh.indices.length / 3
+      if (hit.triangle < end) {
         ;({ label, drawn } = mesh)
+        if (!mesh.ground) thing = [first, end]
         break
       }
+      first = end
     }
   }
   // Nudged off the surface, so a wall's spot finds the floor beside it, not its own top.
   const [x, y, z] = hit.point.map((v, k) => v + hit.normal[k]! * 0.05)
-  const floor = heightBelow(scene, x!, y!, z!, i => !!generated.primitives[i]?.dropped)
+  const dropped = (i: number) => !!generated.primitives[i]?.dropped
+  const floor = heightBelow(scene, x!, y!, z!, dropped)
+  let beside: Picked['beside']
+  if (thing) {
+    // Out from the spot along the axis it faces most, until nothing of the thing is below.
+    const [nx, , nz] = hit.normal
+    const [dx, dz] = Math.abs(nx) > Math.abs(nz) ? [Math.sign(nx), 0] : [0, Math.sign(nz)]
+    const below = { triangle: -1 }
+    for (let out = 0; out <= MAX_BESIDE; out += BESIDE_STEP) {
+      const height = heightBelow(scene, x! + dx * out, y!, z! + dz * out, dropped, below)
+      if (below.triangle >= thing[0] && below.triangle < thing[1]) continue
+      beside = { out, floor: height }
+      break
+    }
+  }
   // Dropped boxes come last, in the order they were dropped.
   const box = hit.kind === 'primitive' && generated.primitives[hit.index]?.dropped
     ? generated.primitives.slice(0, hit.index).filter(p => p.dropped).length
     : undefined
-  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor, box, drawn }
+  return { kind: hit.kind, label: label ?? 'Something', distance: hit.distance, point: hit.point, normal: hit.normal, floor, beside, box, drawn }
 }
 
 /**

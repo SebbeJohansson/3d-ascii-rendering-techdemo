@@ -52,6 +52,11 @@ export interface Mesh {
   label?: string
   /** A shape drawn in the panel (see lib/shapes.ts): its index among them. */
   drawn?: number
+  /**
+   * Land (a mountainside), not a thing standing on it: a shape placed against its side stands
+   * on it below, where against a thing's side (the dragon's flank) it stands on what is under the thing.
+   */
+  ground?: boolean
 }
 
 export interface EnvironmentScene {

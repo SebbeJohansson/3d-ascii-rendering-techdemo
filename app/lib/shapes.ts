@@ -130,7 +130,8 @@ function cameraForward(camera: Camera): [number, number] {
 
 /**
  * The shape the drawing makes at a clicked spot, like a dropped box: on top of a roof, under a
- * ceiling, or on the floor against a wall on the side clicked. A blob sinks halfway into what
+ * ceiling, or on the floor against a wall on the side clicked; against the side of a mesh that
+ * is a thing (the dragon), on what is under it, not on its own lower half. A blob sinks halfway into what
  * was clicked, so blobs clicked onto blobs melt into them. An extruded shape is turned so the
  * top of the grid points away from the camera, as drawn.
  */
@@ -149,9 +150,10 @@ export function placeShape(tool: DrawTool, drawing: Drawing, spot: DropSpot, cam
   let z = pz
   if (ny <= -0.5) y -= height
   else if (ny < 0.5) {
-    if (Math.abs(nx) > Math.abs(nz)) x += Math.sign(nx) * (hx + GAP)
-    else z += Math.sign(nz) * (hz + GAP)
-    y = spot.floor
+    const out = (spot.beside?.out ?? 0) + GAP
+    if (Math.abs(nx) > Math.abs(nz)) x += Math.sign(nx) * (hx + out)
+    else z += Math.sign(nz) * (hz + out)
+    y = spot.beside?.floor ?? spot.floor
   }
   if (tool === 'spin') {
     // Standing on its lowest point, wherever on the pad it was drawn.

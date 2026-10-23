@@ -179,7 +179,7 @@ export const mountains: Environment = {
 
     return {
       primitives,
-      meshes: [{ ...mesh, roughness: 1, label: 'Mountainside' }],
+      meshes: [{ ...mesh, roughness: 1, label: 'Mountainside', ground: true }],
       extent,
       summary: `${Math.round(peak)} m peak · ${trees} trees`,
       groundHeight: land.at,

@@ -908,14 +908,17 @@ function hitNormal(s: RaycastScene): Vec3 {
 
 /**
  * Height of the first surface straight below (x, y, z), leaving out the player and the
- * primitives `skip` says yes to. 0 (the ground's height) if nothing is below.
+ * primitives `skip` says yes to. 0 (the ground's height) if nothing is below. `below`, if
+ * given, gets the mesh triangle found there, or -1 for anything else.
  */
-export function heightBelow(s: RaycastScene, x: number, y: number, z: number, skip: (primitive: number) => boolean) {
+export function heightBelow(s: RaycastScene, x: number, y: number, z: number, skip: (primitive: number) => boolean, below?: { triangle: number }) {
   const player = s.player
   s.player = undefined
   let height = 0
+  if (below) below.triangle = -1
   while (trace(s, x, y, z, 0, -1, 0, false, Infinity)) {
     height = y - hit.t
+    if (below && hit.prim === MESH) below.triangle = hit.triangle
     if (hit.prim < 0 || !skip(hit.prim)) break
     // Carry on from just under the skipped primitive.
     y = s.bounds[hit.prim * 6 + 1]! - EPS

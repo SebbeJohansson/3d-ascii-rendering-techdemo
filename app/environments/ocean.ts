@@ -171,7 +171,7 @@ export const ocean: Environment = {
 
     return {
       primitives,
-      meshes: [{ ...mesh, roughness: 1, label: 'Island' }],
+      meshes: [{ ...mesh, roughness: 1, label: 'Island', ground: true }],
       extent,
       summary: `${islands.length} islands · ${palms} palms`,
       groundHeight: (x, z) => Math.max(0, height(x, z)),

@@ -28,6 +28,12 @@ export interface DropSpot {
   normal: Vec3
   /** Height of the environment straight below the spot, leaving out dropped boxes. */
   floor: number
+  /**
+   * Clicked on the side of a mesh that is a thing, not land (the dragon's flank): how far out
+   * from the spot, along x or z, whichever the normal leans to most, nothing of it is below
+   * any more, and the height of what is below there. A shape placed against it goes there.
+   */
+  beside?: { out: number, floor: number }
   /** Index of the dropped box clicked, if one was. */
   box?: number
 }
