@@ -11,7 +11,7 @@
 import type { Environment, EnvironmentScene, Mesh, Primitive, Shape } from '../environments/types'
 import type { PlayerPose } from '../players/types'
 import { lightingAt, NOON, type Lighting } from '../environments/lighting'
-import { buildBvh, bvhHit, intersectBvh, joinBvhs, joinedNode, joinRoot, refitBvh, type Bvh } from './bvh'
+import { buildBvh, bvhHit, intersectBvh, joinBvhs, joinedNode, joinRoot, nodesHolding, refitBvh, type Bvh } from './bvh'
 import { linearRgb, linearToSrgbByte } from './color'
 import { cameraBasis, scale, type Vec3 } from './math'
 import { WINDOW_COLOR, WINDOW_GLOW, windowLit } from './windows'
@@ -50,6 +50,8 @@ export interface RaycastScene {
     normals: Float32Array
     /** Diffuse albedo per vertex: linear r, g, b, already scaled by (1 - metalness). */
     albedo: Float32Array
+    /** The BVH nodes animating the environment can move (see nodesHolding()); all if unset. */
+    refit?: Uint32Array
   }
   /** What `mesh` is made of: the environment's meshes and the drawn shapes', each with a BVH. */
   parts?: { env?: MeshPart, shapes?: MeshPart }
@@ -84,6 +86,8 @@ export interface RaycastPlayer {
   normals: Float32Array
   /** Diffuse albedo per vertex, like RaycastScene.mesh. */
   albedo: Float32Array
+  /** The BVH nodes animating it can move; all if unset. */
+  refit?: Uint32Array
   scale: number
   x: number
   y: number
@@ -330,8 +334,25 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
     updateMeshes(s, { meshes: [...meshes], primitives: [], extent: 0, summary: '' })
   }
   else s.mesh = env ?? shapes
+  if (s.mesh) s.mesh.refit = movingNodes(s.mesh.bvh, envMeshes)
   s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
   return true
+}
+
+/**
+ * The BVH nodes that animating `meshes` can move, given that their vertices come first in
+ * `bvh`'s (in order). Undefined, for refitting all of it, if one of them doesn't say which
+ * of its vertices move (Mesh.moving).
+ */
+function movingNodes(bvh: Bvh, meshes: readonly Mesh[]) {
+  if (!meshes.length || meshes.some(m => !m.moving)) return undefined
+  const mask = new Uint8Array(bvh.positions.length / 3)
+  let offset = 0
+  for (const m of meshes) {
+    for (const v of m.moving!) mask[offset + v] = 1
+    offset += m.positions.length / 3
+  }
+  return nodesHolding(bvh, mask)
 }
 
 /**
@@ -347,7 +368,7 @@ export function updateMeshes(s: RaycastScene, { meshes = [] }: EnvironmentScene)
     normals.set(m.normals, offset)
     offset += m.positions.length
   }
-  refitBvh(bvh)
+  refitBvh(bvh, s.mesh.refit)
   s.maxHeight = Math.max(s.primitivesHeight, bvh.bounds[4]!)
 }
 
@@ -357,10 +378,12 @@ export function updateMeshes(s: RaycastScene, { meshes = [] }: EnvironmentScene)
  */
 export function buildRaycastPlayer(mesh: Mesh, scale: number): RaycastPlayer {
   const keep = 1 - (mesh.metalness ?? 0)
+  const bvh = buildBvh(mesh.positions, mesh.indices)
   return {
-    bvh: buildBvh(mesh.positions, mesh.indices),
+    bvh,
     normals: mesh.normals,
     albedo: mesh.colors.map(c => c * keep),
+    refit: movingNodes(bvh, [mesh]),
     scale,
     x: 0,
     y: 0,
@@ -375,7 +398,7 @@ export function placePlayer(p: RaycastPlayer, { position, heading }: PlayerPose,
   ;[p.x, p.y, p.z] = position
   p.cos = Math.cos(heading)
   p.sin = Math.sin(heading)
-  if (animated) refitBvh(p.bvh)
+  if (animated) refitBvh(p.bvh, p.refit)
 }
 
 /** Result of the last trace() call. Reused to avoid allocating per ray. */

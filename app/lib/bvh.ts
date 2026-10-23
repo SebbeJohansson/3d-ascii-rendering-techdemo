@@ -263,51 +263,81 @@ export function intersectBvh(bvh: Bvh, ox: number, oy: number, oz: number, dx: n
  * Updates the boxes after the mesh's vertices moved (e.g. flapping wings), keeping the tree's
  * structure. Much cheaper than a rebuild, and fine as long as the motion is moderate: boxes
  * just get a bit looser. Children always come after their parent in the node list, so going
- * backwards fixes every child before its parent needs it.
+ * backwards fixes every child before its parent needs it. With `only` (ascending, from
+ * nodesHolding()), just those nodes are refitted: the ones that can have moved.
  */
-export function refitBvh(bvh: Bvh) {
-  const { bounds, nodes, order, positions: p, indices } = bvh
-  for (let node = nodes.length / 2 - 1; node >= 0; node--) {
+export function refitBvh(bvh: Bvh, only?: Uint32Array) {
+  const { bounds: b, nodes, order, positions: p, indices } = bvh
+  for (let k = (only ? only.length : nodes.length / 2) - 1; k >= 0; k--) {
+    const node = only ? only[k]! : k
     const o = node * 6
     const count = nodes[node * 2 + 1]!
+    if (count === 0) {
+      const l = nodes[node * 2]! * 6
+      const r = l + 6
+      b[o] = b[l]! < b[r]! ? b[l]! : b[r]!
+      b[o + 1] = b[l + 1]! < b[r + 1]! ? b[l + 1]! : b[r + 1]!
+      b[o + 2] = b[l + 2]! < b[r + 2]! ? b[l + 2]! : b[r + 2]!
+      b[o + 3] = b[l + 3]! > b[r + 3]! ? b[l + 3]! : b[r + 3]!
+      b[o + 4] = b[l + 4]! > b[r + 4]! ? b[l + 4]! : b[r + 4]!
+      b[o + 5] = b[l + 5]! > b[r + 5]! ? b[l + 5]! : b[r + 5]!
+      continue
+    }
     let minX = Infinity
     let minY = Infinity
     let minZ = Infinity
     let maxX = -Infinity
     let maxY = -Infinity
     let maxZ = -Infinity
-    if (count === 0) {
-      const left = nodes[node * 2]! * 6
-      for (const c of [left, left + 6]) {
-        minX = Math.min(minX, bounds[c]!)
-        minY = Math.min(minY, bounds[c + 1]!)
-        minZ = Math.min(minZ, bounds[c + 2]!)
-        maxX = Math.max(maxX, bounds[c + 3]!)
-        maxY = Math.max(maxY, bounds[c + 4]!)
-        maxZ = Math.max(maxZ, bounds[c + 5]!)
+    for (let k2 = nodes[node * 2]!, end = k2 + count; k2 < end; k2++) {
+      const t3 = order[k2]! * 3
+      for (let corner = 0; corner < 3; corner++) {
+        const v = indices[t3 + corner]! * 3
+        const x = p[v]!
+        const y = p[v + 1]!
+        const z = p[v + 2]!
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+        if (z < minZ) minZ = z
+        if (z > maxZ) maxZ = z
       }
     }
-    else {
-      for (let k = nodes[node * 2]!, end = k + count; k < end; k++) {
-        const t3 = order[k]! * 3
-        for (let corner = 0; corner < 3; corner++) {
-          const v = indices[t3 + corner]! * 3
-          minX = Math.min(minX, p[v]!)
-          minY = Math.min(minY, p[v + 1]!)
-          minZ = Math.min(minZ, p[v + 2]!)
-          maxX = Math.max(maxX, p[v]!)
-          maxY = Math.max(maxY, p[v + 1]!)
-          maxZ = Math.max(maxZ, p[v + 2]!)
-        }
-      }
-    }
-    bounds[o] = minX
-    bounds[o + 1] = minY
-    bounds[o + 2] = minZ
-    bounds[o + 3] = maxX
-    bounds[o + 4] = maxY
-    bounds[o + 5] = maxZ
+    b[o] = minX
+    b[o + 1] = minY
+    b[o + 2] = minZ
+    b[o + 3] = maxX
+    b[o + 4] = maxY
+    b[o + 5] = maxZ
   }
+}
+
+/**
+ * The nodes whose boxes can change when the vertices `moving` says yes to move: the leaves
+ * holding a triangle with one, and every node above those. Ascending, for refitBvh().
+ */
+export function nodesHolding(bvh: Bvh, moving: Uint8Array) {
+  const { nodes, order, indices } = bvh
+  const count = nodes.length / 2
+  const parent = new Int32Array(count).fill(-1)
+  const dirty = new Uint8Array(count)
+  for (let n = 0; n < count; n++) {
+    if (nodes[n * 2 + 1] === 0) parent[nodes[n * 2]!] = parent[nodes[n * 2]! + 1] = n
+  }
+  for (let n = 0; n < count; n++) {
+    const leaf = nodes[n * 2 + 1]!
+    if (!leaf) continue
+    let moves = false
+    for (let k = nodes[n * 2]!, end = k + leaf; k < end && !moves; k++) {
+      const t3 = order[k]! * 3
+      moves = !!(moving[indices[t3]!] || moving[indices[t3 + 1]!] || moving[indices[t3 + 2]!])
+    }
+    for (let q = n; moves && q >= 0 && !dirty[q]; q = parent[q]!) dirty[q] = 1
+  }
+  const list: number[] = []
+  for (let n = 0; n < count; n++) if (dirty[n]) list.push(n)
+  return new Uint32Array(list)
 }
 
 /**

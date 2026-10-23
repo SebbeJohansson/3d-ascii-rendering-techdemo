@@ -50,6 +50,11 @@ export interface Mesh {
   metalness?: number
   /** What it is, shown when it is clicked. */
   label?: string
+  /**
+   * The vertices animate() moves, for an animated mesh (the dragon's wings); the others stay.
+   * Lets the ray tracer refit only the part of its BVH that can move.
+   */
+  moving?: Uint32Array
   /** A shape drawn in the panel (see lib/shapes.ts): its index among them. */
   drawn?: number
   /**

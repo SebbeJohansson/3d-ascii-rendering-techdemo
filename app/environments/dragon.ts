@@ -213,7 +213,7 @@ export const dragon: Environment = {
       rigs.set(mesh, rig)
     }
     // Own copies of positions and normals: animate() writes into them every frame.
-    const posed: Mesh = { positions: mesh.positions.slice(), normals: mesh.normals.slice(), colors, indices: mesh.indices, roughness: 0.8, label: `${palette.name} dragon` }
+    const posed: Mesh = { positions: mesh.positions.slice(), normals: mesh.normals.slice(), colors, indices: mesh.indices, roughness: 0.8, label: `${palette.name} dragon`, moving: rig.vertices }
     meshRigs.set(posed, rig)
 
     return {
