@@ -117,8 +117,8 @@ const TOOLS: { id: DrawTool, name: string }[] = [
 }
 
 .swatch {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 1px solid rgb(0 0 0 / 0.2);
   border-radius: 50%;
