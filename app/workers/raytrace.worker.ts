@@ -3,12 +3,18 @@
 // each tracing an interleaved share of the rows (see lib/tracers.ts).
 import type { Primitive } from '../environments/types'
 import type { DrawnShape } from '../lib/shapes'
-import { renderScene, type Camera } from '../lib/raycaster'
+import { renderScene, type Camera, type MeshPart } from '../lib/raycaster'
 import { createPlayerSlot, createSceneSlot, pickScene, poseScene, type Picked } from '../lib/tracers'
 import type { PlayerKind, PlayerPose } from '../players'
 
 export type WorkerRequest =
-  | { type: 'scene', envId: string, seed: number, size: number }
+  /**
+   * A new scene. 'build' builds it; 'share' builds it and replies with its meshes' part for
+   * the other workers; 'wait' generates it and waits for that part (a 'part' message) before
+   * building it, so its BVH is built once, not in every worker.
+   */
+  | { type: 'scene', envId: string, seed: number, size: number, mode: 'build' | 'share' | 'wait', version: number }
+  | { type: 'part', version: number, part?: MeshPart }
   | { type: 'boxes', boxes: Primitive[] }
   | { type: 'shapes', shapes: DrawnShape[] }
   | { type: 'player', kind: PlayerKind | null, seed: number }
@@ -18,12 +24,15 @@ export type WorkerRequest =
   | { type: 'render', camera: Camera, time: number, timeOfDay: number, occlusion: boolean, player?: PlayerPose, cols: number, rows: number, rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 export type WorkerResponse =
-  | { type: 'scene', summary: string }
+  /** With `version` when it answers a 'share' scene, with the part to hand on. */
+  | { type: 'scene', summary: string, version?: number, part?: MeshPart }
   | { type: 'pick', picked: Picked | null }
   | { type: 'frame', rowStart: number, rowStep: number, ink: Uint8Array, rgb: Uint8Array, depths: Float32Array, normals: Int8Array }
 
 const slot = createSceneSlot()
 const player = createPlayerSlot()
+/** The version of the scene generated and waiting for its part, if one is. */
+let waiting: number | undefined
 
 function reply(message: WorkerResponse, transfer: Transferable[] = []) {
   self.postMessage(message, { transfer })
@@ -33,7 +42,20 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data
   const { scene, generated, envId } = slot
   if (msg.type === 'scene') {
-    reply({ type: 'scene', summary: slot.set(msg.envId, msg.seed, msg.size) })
+    if (msg.mode === 'wait') {
+      slot.generate(msg.envId, msg.seed, msg.size)
+      waiting = msg.version
+      return
+    }
+    waiting = undefined
+    const summary = slot.set(msg.envId, msg.seed, msg.size)
+    reply(msg.mode === 'share' ? { type: 'scene', summary, version: msg.version, part: slot.shareable() } : { type: 'scene', summary })
+  }
+  else if (msg.type === 'part') {
+    // A part for a scene since replaced is no use: the right one is on its way.
+    if (msg.version !== waiting) return
+    waiting = undefined
+    reply({ type: 'scene', summary: slot.build(msg.part) })
   }
   else if (msg.type === 'boxes') {
     const summary = slot.setBoxes(msg.boxes)

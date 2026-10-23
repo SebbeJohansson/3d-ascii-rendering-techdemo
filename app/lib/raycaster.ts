@@ -148,7 +148,12 @@ export function setLighting(s: RaycastScene, lighting: Lighting) {
   }
 }
 
-export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene): RaycastScene {
+/**
+ * The ray tracer's copy of a generated scene. `prebuilt` is the environment's meshes' part
+ * (see shareableMeshes()) built elsewhere for the same scene, to use instead of building it
+ * again: the costly part, a BVH. A part that doesn't match the meshes is ignored.
+ */
+export function buildRaycastScene(env: Environment, { primitives, extent, meshes = [] }: EnvironmentScene, prebuilt?: MeshPart): RaycastScene {
   const scene: RaycastScene = {
     bounds: new Float32Array(0),
     shapes: new Uint8Array(0),
@@ -169,6 +174,7 @@ export function buildRaycastScene(env: Environment, { primitives, extent, meshes
     stamp: new Uint32Array(0),
     rayId: 0,
     occlusion: false,
+    parts: prebuilt && { env: prebuilt },
   }
   setMeshes(scene, meshes)
   setPrimitives(scene, primitives)
@@ -224,8 +230,8 @@ function same(a: Uint32Array | Float32Array, b: Uint32Array | Float32Array) {
   return true
 }
 
-/** Some meshes merged into one, with a BVH of their own. */
-interface MeshPart {
+/** Some meshes merged into one, with a BVH of their own. Plain arrays: it can be posted to a worker. */
+export interface MeshPart {
   bvh: Bvh
   normals: Float32Array
   albedo: Float32Array
@@ -302,7 +308,7 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
   const envSame = sameMeshes(old?.env, envMeshes)
   const env = envSame ? old?.env : envMeshes.length ? buildPart(envMeshes) : undefined
   // Nothing drawn, before or now, and the same environment: nothing to do.
-  if (envSame && !shapeMeshes.length && !old?.shapes) return false
+  if (envSame && !shapeMeshes.length && !old?.shapes && s.mesh === env) return false
   const shapes = shapeMeshes.length ? buildShapesPart(shapeMeshes) : undefined
   const mesh = s.mesh
   const previous = old?.shapes
@@ -337,6 +343,14 @@ export function setMeshes(s: RaycastScene, meshes: readonly Mesh[]) {
   if (s.mesh) s.mesh.refit = movingNodes(s.mesh.bvh, envMeshes)
   s.maxHeight = s.mesh ? Math.max(s.primitivesHeight, s.mesh.bvh.bounds[4]!) : s.primitivesHeight
   return true
+}
+
+/**
+ * The environment's meshes' part of the scene, to hand to buildRaycastScene() for the same
+ * scene elsewhere (another worker) so it needn't build its BVH again. Undefined without meshes.
+ */
+export function shareableMeshes(s: RaycastScene): MeshPart | undefined {
+  return s.parts?.env
 }
 
 /**

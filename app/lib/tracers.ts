@@ -10,7 +10,7 @@ import { getPlayer, type PlayerKind, type PlayerModel, type PlayerPose } from '.
 import { lightingAt, NOON } from '../environments/lighting'
 import { withBoxes, type DropSpot } from './boxes'
 import { shapeMeshes, withShapes, type DrawnShape } from './shapes'
-import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setMeshes, setPrimitives, updateMeshes, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
+import { buildRaycastPlayer, buildRaycastScene, castRay, heightBelow, placePlayer, renderScene, setLighting, setMeshes, setPrimitives, shareableMeshes, updateMeshes, type MeshPart, type Camera, type RayHit, type RaycastPlayer, type RaycastScene } from './raycaster'
 
 export interface TracedFrame {
   cols: number
@@ -158,12 +158,28 @@ export function createSceneSlot() {
     scene: undefined as RaycastScene | undefined,
     /** Generates the environment and builds its ray tracer's copy. Returns its summary. */
     set(envId: string, seed: number, size: number) {
-      const env = getEnvironment(envId)
-      base = env.generate(seed, size)
+      slot.generate(envId, seed, size)
+      return slot.build()
+    },
+    /** Generates the environment, leaving its ray tracer's copy for build(). */
+    generate(envId: string, seed: number, size: number) {
+      base = getEnvironment(envId).generate(seed, size)
       slot.generated = compose(base)
-      slot.scene = buildRaycastScene(env, slot.generated)
+      slot.scene = undefined
       slot.envId = envId
+    },
+    /**
+     * Builds the ray tracer's copy of the generated environment, with the meshes' part
+     * `prebuilt` elsewhere if given (see shareableMeshes()). Returns its summary.
+     */
+    build(prebuilt?: MeshPart) {
+      slot.generated = compose(base!)
+      slot.scene = buildRaycastScene(getEnvironment(slot.envId), slot.generated, prebuilt)
       return slot.generated.summary
+    },
+    /** The environment's meshes' part of the built copy, to build it elsewhere without its BVH. */
+    shareable() {
+      return slot.scene && shareableMeshes(slot.scene)
     },
     /** Returns the new summary, or undefined while there is no scene yet. */
     setBoxes(next: Primitive[]) {
@@ -327,7 +343,7 @@ export interface TraceWorker {
   terminate: () => void
 }
 
-function spawnBrowserWorker(): TraceWorker {
+export function spawnBrowserWorker(): TraceWorker {
   return new Worker(new URL('../workers/raytrace.worker.ts', import.meta.url), { type: 'module' })
 }
 
@@ -338,6 +354,9 @@ function spawnBrowserWorker(): TraceWorker {
  */
 export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = DEFAULT_WORKER_COUNT, spawn = spawnBrowserWorker): Tracer {
   let pending = 0
+  /** Scenes asked for, and how many the first worker hasn't built and handed on yet. */
+  let version = 0
+  let building = 0
   let frameStart = 0
   let frame: TracedFrame | undefined
   /** Picks asked of the first worker, answered in order. */
@@ -355,6 +374,11 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
 
   function onMessage(worker: TraceWorker, msg: WorkerResponse) {
     if (msg.type === 'scene') {
+      // The first worker built a scene for the others: hand its meshes' part on.
+      if (msg.version !== undefined) {
+        for (const w of workers.slice(1)) post(w, { type: 'part', version: msg.version, part: msg.part })
+        building--
+      }
       // Every worker replies; they all built the same scene, so report it once.
       if (worker === workers[0]) onScene(msg.summary)
       return
@@ -384,10 +408,14 @@ export function createWorkerTracer({ onScene, onFrame }: TracerEvents, count = D
   return {
     label: `${count} workers`,
     get busy() {
-      return pending > 0
+      // Until the first worker hands on a new scene, the others can't trace it.
+      return pending > 0 || building > 0
     },
     setScene(envId, seed, size) {
-      for (const w of workers) post(w, { type: 'scene', envId, seed, size })
+      // The others generate it meanwhile; only the first builds its BVH (see the worker).
+      version++
+      building++
+      workers.forEach((w, k) => post(w, { type: 'scene', envId, seed, size, mode: k ? 'wait' : 'share', version }))
     },
     setBoxes(boxes) {
       for (const w of workers) post(w, { type: 'boxes', boxes })
