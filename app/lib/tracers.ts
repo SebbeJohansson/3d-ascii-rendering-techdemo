@@ -186,16 +186,22 @@ export function createSceneSlot() {
 }
 
 /**
+ * How often, in seconds, picking poses an animated environment's meshes again: refitting the
+ * dragon takes a few ms, too much for every pointer move, and a pose this old is close enough.
+ */
+const POSE_EVERY = 0.1
+
+/**
  * Picking for a view drawn without the ray tracer (the 3D view): builds the ray tracer's copy
- * of the scene on the first pick, and brings moved meshes up to date before each one after.
+ * of the scene on the first pick, and brings moved meshes up to date before picks after.
  */
 export function createScenePicker() {
-  let built: { env: Environment, generated: EnvironmentScene, scene: RaycastScene } | undefined
+  let built: { env: Environment, generated: EnvironmentScene, scene: RaycastScene, posed: number } | undefined
   const player = createPlayerSlot()
   return {
     setPlayer: player.set,
     pick(env: Environment, generated: EnvironmentScene, pose: PlayerPose | undefined, time: number, camera: Camera, u: number, v: number) {
-      if (!built || built.env !== env || built.generated.extent !== generated.extent) built = { env, generated, scene: buildRaycastScene(env, generated) }
+      if (!built || built.env !== env || built.generated.extent !== generated.extent) built = { env, generated, scene: buildRaycastScene(env, generated), posed: time }
       else if (built.generated !== generated) {
         // Boxes or shapes changed (or moved): update the copy in place. Moved shapes only
         // refit the meshes' BVH instead of building it again.
@@ -203,7 +209,10 @@ export function createScenePicker() {
         setMeshes(built.scene, generated.meshes ?? [])
         built.generated = generated
       }
-      else if (env.animate) updateMeshes(built.scene, generated)
+      else if (env.animate && Math.abs(time - built.posed) >= POSE_EVERY) {
+        updateMeshes(built.scene, generated)
+        built.posed = time
+      }
       player.attach(built.scene, pose, time)
       return pickScene(env.id, generated, built.scene, player.name, camera, u, v)
     },

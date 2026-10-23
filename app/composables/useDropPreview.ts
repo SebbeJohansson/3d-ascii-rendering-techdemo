@@ -61,6 +61,15 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
     outline.value = shown && boxOutline(shown, view.camera, view.width, view.height)
   }
 
+  /** The frame an update is waiting for: pointer moves come faster than frames, so they wait for one. */
+  let frame = 0
+  function schedule() {
+    frame ||= requestAnimationFrame(() => {
+      frame = 0
+      update()
+    })
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.key !== 'Shift' || e.shiftKey === shift || e.repeat) return
     shift = e.shiftKey
@@ -73,6 +82,7 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
   onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKey)
     window.removeEventListener('keyup', onKey)
+    cancelAnimationFrame(frame)
   })
   // A drop changes what is there and rolls the next box.
   // Counts, not the boxes and shapes themselves: picking every frame while they fall is slow.
@@ -85,7 +95,7 @@ export function useDropPreview(env: Environment, pickAt: (x: number, y: number) 
       pointer = { x, y }
       shift = shiftKey
       dragging = drag
-      update()
+      schedule()
     },
     leave() {
       pointer = undefined
